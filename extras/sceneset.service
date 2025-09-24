@@ -1,0 +1,9 @@
+[Unit]
+Description=Application launcher service
+Requires=wpeframework-appmanager.service
+After=wpeframework-appmanager.service
+
+[Service]
+Type=notify
+
+ExecStart=/usr/bin/sceneset
