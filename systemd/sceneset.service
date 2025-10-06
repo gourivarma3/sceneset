@@ -1,0 +1,14 @@
+[Unit]
+Description=Application launcher service
+Requires=wpeframework-appmanager.service
+After=wpeframework-appmanager.service
+
+[Service]
+Type=notify
+
+#Default appname will be changed from wpebrowser bundle name to app URL once the implementation to load the dynamically configured app URL in wpebrowser is possible
+Environment=SCENESET_DEFAULT_APPNAME=com.rdk.wpebrowser
+ExecStart=/usr/bin/sceneset
+
+[Install]
+WantedBy=multi-user.target
