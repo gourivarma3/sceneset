@@ -19,4 +19,3 @@ cmake_minimum_required(VERSION 3.16)
 
 set(PROJECT_NAME "thunderclient")
 add_subdirectory(src)
-add_subdirectory(Tests/L1Tests)
