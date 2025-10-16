@@ -1,46 +1,82 @@
+# If not stated otherwise in this file or this component's LICENSE file the
+# following copyright and licenses apply:
+#
+# Copyright 2025 RDK Management
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 cmake_minimum_required(VERSION 3.8)
-          set(PLUGIN_NAME SceneSetL1TestsIN)
-          set(MODULE_NAME ${NAMESPACE}${PLUGIN_NAME})
 
-          set(CMAKE_CXX_STANDARD 14)
-          set(CMAKE_CXX_STANDARD_REQUIRED ON)
+project(SceneSetL1Tests)
 
-          find_package(${NAMESPACE}Plugins REQUIRED)
+set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-          set (TEST_SRC
-              tests/test_SceneSet.cpp
-          )
+# Find required packages
+find_package(GTest REQUIRED)
 
-          set (TEST_LIB
-              ${NAMESPACE}Plugins::${NAMESPACE}Plugins
-              pthread
-          )
+# Set the executable name
+set(TEST_EXECUTABLE SceneSetL1TestsIN)
 
-          set (TEST_INC
-              ../../SceneSet/src
-          )
+# Source files - include the actual SceneSet implementation
+set(TEST_SRC
+    tests/test_SceneSet.cpp
+    ../../src/SceneSet.cpp
+   )
 
-          add_library(${MODULE_NAME} SHARED ${TEST_SRC})
+# Create the test executable
+add_executable(${TEST_EXECUTABLE} ${TEST_SRC})
 
-          if (RDK_SERVICES_L1_TEST)
-              target_link_options(${MODULE_NAME} PRIVATE "-Wl,-wrap,opendir")
-          endif (RDK_SERVICES_L1_TEST)
+# WPEFramework library paths
+set(WPEFRAMEWORK_LIB_DIR ${CMAKE_INSTALL_PREFIX}/lib)
+set(WPEFRAMEWORK_INCLUDE_DIR ${CMAKE_INSTALL_PREFIX}/include)
 
-          include_directories(${TEST_INC})
+#Link libraries
+target_link_libraries(${TEST_EXECUTABLE}
+    ${GTEST_LIBRARIES}
+    ${GTEST_MAIN_LIBRARIES}
+    ${WPEFRAMEWORK_LIB_DIR}/libWPEFrameworkCore.so
+    ${WPEFRAMEWORK_LIB_DIR}/libWPEFrameworkCOM.so
+    pthread
+    systemd
+    dl
+)
 
-          target_link_directories(${MODULE_NAME} PUBLIC ${CMAKE_INSTALL_PREFIX}/lib ${CMAKE_INSTALL_PREFIX}/lib/wpeframework/plugins)
+# Include directories
+target_include_directories(${TEST_EXECUTABLE}
+    PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
+    ${GTEST_INCLUDE_DIRS}
+    ${WPEFRAMEWORK_INCLUDE_DIR}
+    ${WPEFRAMEWORK_INCLUDE_DIR}/WPEFramework
+)
 
-          target_link_libraries(${MODULE_NAME} ${TEST_LIB})
+# Add coverage flags for gcc with-coverage builds
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    target_compile_options(${TEST_EXECUTABLE}
+        PRIVATE
+        --coverage
+        -fprofile-arcs
+        -ftest-coverage
+        -g
+        -O0
+    )
+    target_link_options(${TEST_EXECUTABLE}
+        PRIVATE
+        --coverage
+    )
+endif()
 
-          target_include_directories(${MODULE_NAME}
-                  PUBLIC
-                  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
-                  $<INSTALL_INTERFACE:include>
-                  ${CMAKE_SOURCE_DIR}/../entservices-testframework/Tests/mocks
-                  ${CMAKE_SOURCE_DIR}/../entservices-testframework/Tests/mocks/devicesettings
-                  ${CMAKE_SOURCE_DIR}/../entservices-testframework/Tests/mocks/thunder
-                  ${CMAKE_SOURCE_DIR}/../Thunder/Source/plugins
-                  )
-
-          install(TARGETS ${MODULE_NAME} DESTINATION lib)
-          write_config(${PLUGIN_NAME})
+# Install the binary
+install(TARGETS ${TEST_EXECUTABLE} DESTINATION bin)
