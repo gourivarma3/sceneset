@@ -2,7 +2,7 @@
 * If not stated otherwise in this file or this component's LICENSE
 * file the following copyright and licenses apply:
 *
-* Copyright 2024 RDK Management
+* Copyright 2025 RDK Management
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -23,8 +23,12 @@
 #include <csignal>
 #include <string>
 #include <memory>
+#include <thread>
+#include <chrono>
 
-// Test fixture for SceneSet tests
+#include "SceneSet.h"
+
+
 class SceneSetTest : public ::testing::Test {
 protected:
     SceneSetTest() = default;
@@ -43,48 +47,93 @@ protected:
     }
 };
 
-
-// Test environment variable handling for app names
-TEST_F(SceneSetTest, AppNameEnvironmentVariable) {
-    // Test with valid app name
-    setenv("SCENESET_DEFAULT_APPNAME", "ValidApp", 1);
-    const char* appName = getenv("SCENESET_DEFAULT_APPNAME");
-    EXPECT_STREQ(appName, "ValidApp");
+// Test SceneSetApp singleton pattern
+TEST_F(SceneSetTest, SingletonPattern) {
+    SceneSetApp& instance1 = SceneSetApp::getInstance();
+    SceneSetApp& instance2 = SceneSetApp::getInstance();
     
-    // Test with empty app name
-    setenv("SCENESET_DEFAULT_APPNAME", "", 1);
-    appName = getenv("SCENESET_DEFAULT_APPNAME");
-    EXPECT_STREQ(appName, "");
-    
-    // Test without app name
-    unsetenv("SCENESET_DEFAULT_APPNAME");
-    appName = getenv("SCENESET_DEFAULT_APPNAME");
-    EXPECT_EQ(appName, nullptr);
+    EXPECT_EQ(&instance1, &instance2);
 }
 
-// Test environment variable handling for Thunder access
-TEST_F(SceneSetTest, ThunderAccessEnvironmentVariable) {
-    // Test with valid path
-    setenv("THUNDER_ACCESS", "/tmp/test_communicator", 1);
-    const char* thunderAccess = getenv("THUNDER_ACCESS");
-    EXPECT_STREQ(thunderAccess, "/tmp/test_communicator");
-    
-    // Test with empty path
-    setenv("THUNDER_ACCESS", "", 1);
-    thunderAccess = getenv("THUNDER_ACCESS");
-    EXPECT_STREQ(thunderAccess, "");
-    
-    // Test without path
-    unsetenv("THUNDER_ACCESS");
-    thunderAccess = getenv("THUNDER_ACCESS");
-    EXPECT_EQ(thunderAccess, nullptr);
-}
-
-// Test signal handling
-TEST_F(SceneSetTest, SignalHandling) {
-    // Test that SIGTERM signal is handled
+// Test SceneSetApp constructor and destructor
+TEST_F(SceneSetTest, ConstructorDestructor) {
     EXPECT_NO_THROW({
-        kill(getpid(), 0); // Test that process exists
+        SceneSetApp app;
     });
+}
+
+
+// Test AppManagerEventHandler functionality
+TEST_F(SceneSetTest, AppManagerEventHandlerCreation) {
+    SceneSetApp app;
+    EXPECT_NO_THROW({
+        app.registerForAppEvents();
+    });
+}
+
+// Test launching default app without environment variable
+TEST_F(SceneSetTest, LaunchDefaultAppWithoutEnvVar) {
+    unsetenv("SCENESET_DEFAULT_APPNAME");
+    SceneSetApp app;
+    
+    bool result = app.launchDefaultApp();
+    EXPECT_FALSE(result);
+}
+
+
+// Test initialization without Thunder connection
+TEST_F(SceneSetTest, InitializationWithoutThunder) {
+    setenv("THUNDER_ACCESS", "/invalid/path", 1);
+    SceneSetApp app;
+    
+    bool result = app.initialize();
+    EXPECT_FALSE(result);
+}
+
+// Test termination signal handling
+TEST_F(SceneSetTest, TerminationSignalHandling) {
+    // Test static signal handler
+    EXPECT_NO_THROW({
+        SceneSetApp::handleTerminationSignal(SIGTERM);
+    });
+}
+
+// Test thread safety and concurrent operations
+TEST_F(SceneSetTest, ThreadSafety) {
+    SceneSetApp& app = SceneSetApp::getInstance();
+    
+    // Test that multiple threads can access getInstance safely
+    std::vector<std::thread> threads;
+    std::vector<SceneSetApp*> instances(10);
+    
+    for (int i = 0; i < 10; ++i) {
+        threads.emplace_back([&instances, i]() {
+            instances[i] = &SceneSetApp::getInstance();
+        });
+    }
+    
+    for (auto& thread : threads) {
+        thread.join();
+    }
+    
+    // All instances should be the same
+    for (int i = 1; i < 10; ++i) {
+        EXPECT_EQ(instances[0], instances[i]);
+    }
+}
+
+// Test onTerminate functionality
+TEST_F(SceneSetTest, OnTerminate) {
+    SceneSetApp app;
+    EXPECT_NO_THROW({
+        app.onTerminate();
+    });
+}
+
+// Test unregister functionality
+TEST_F(SceneSetTest, UnregisterForAppEvents) {
+    SceneSetApp app;
+    bool result = app.unRegisterForAppEvents();
+    EXPECT_FALSE(result);
 }
 
