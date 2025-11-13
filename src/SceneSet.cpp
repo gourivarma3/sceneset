@@ -171,6 +171,8 @@ const char* SceneSetApp::AppManagerEventHandler::getAppStateString(const Exchang
 
 void SceneSetApp::AppManagerEventHandler::OnAppUnloaded(const string &appId, const string &appInstanceId) {
     std::cout << "App Unloaded: " << appId << " Instance ID: " << appInstanceId << std::endl;
+    std::cout << " Restartng default app " << endl;
+    SceneSetApp::getInstance().launchDefaultApp();
 }
 
 uint32_t SceneSetApp::AppManagerEventHandler::AddRef() const {
