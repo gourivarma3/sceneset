@@ -23,6 +23,7 @@
 #include <iostream>
 #include <memory>
 #include <thread>
+#include <atomic>
 #include <csignal>
 #include <condition_variable>
 #include <mutex>
@@ -35,6 +36,7 @@
 #include <WPEFramework/com/com.h>
 #include <WPEFramework/core/core.h>
 #include "WPEFramework/interfaces/IAppManager.h"
+#include "WPEFramework/interfaces/IPreinstallManager.h"
 
 using namespace std;
 using namespace WPEFramework;
@@ -46,8 +48,13 @@ public:
 
     bool initialize();
     bool registerForAppEvents();
+    bool registerForPreinstallEvents();
     bool unRegisterForAppEvents();
+    bool unRegisterForPreinstallEvents();
     bool launchDefaultApp();
+    bool startPreinstall();
+    bool isReferenceAppInstalled();
+    void checkAndLaunchIfAlreadyInstalled();
     void waitForTermSignal();
     static void handleTerminationSignal(int signal);
     void onTerminate();
@@ -56,12 +63,23 @@ public:
 
 private:
     std::condition_variable m_act_cv;
-    volatile bool m_isActive;
+    std::atomic<bool> m_isActive;
     std::mutex m_lock;
-    Exchange::IAppManager *appManager;
-    std::shared_ptr<WPEFramework::Exchange::IAppManager::INotification> appManagerEventHandler;
-    std::string appmgrCallsign;
-    const char *comrpcPath;
+    Exchange::IAppManager *m_appManager;
+    Exchange::IPreinstallManager *m_preinstallManager;
+    std::shared_ptr<WPEFramework::Exchange::IAppManager::INotification> m_appManagerEventHandler;
+    std::shared_ptr<WPEFramework::Exchange::IPreinstallManager::INotification> m_preinstallManagerEventHandler;
+    std::string m_appmgrCallsign, m_preinstallCallsign;
+    const std::string m_referenceAppId;
+    std::string m_comrpcPath;
+
+    std::unique_ptr<std::thread> m_launchThread;
+    std::atomic<bool> m_stopLaunchThread;
+    std::atomic<bool> m_appLaunched;
+    std::mutex m_launchThreadMutex;
+
+    void stopCurrentLaunchThread();
+    void startLaunchThread();
 
     class AppManagerEventHandler : public Exchange::IAppManager::INotification {
     public:
@@ -74,7 +92,20 @@ private:
         void OnAppUnloaded(const string &appId, const string &appInstanceId) override;
         uint32_t AddRef() const override;
         uint32_t Release() const override;
-        void* QueryInterface(const uint32_t interfaceNumber) override;
+        BEGIN_INTERFACE_MAP(AppManagerEventHandler)
+        INTERFACE_ENTRY(Exchange::IAppManager::INotification)
+        END_INTERFACE_MAP
+    };
+
+    class PreinstallManagerEventHandler : public Exchange::IPreinstallManager::INotification {
+    public:
+        ~PreinstallManagerEventHandler();
+        void OnAppInstallationStatus(const string &jsonresponse) override;
+        uint32_t AddRef() const override;
+        uint32_t Release() const override;
+        BEGIN_INTERFACE_MAP(PreinstallManagerEventHandler)
+        INTERFACE_ENTRY(Exchange::IPreinstallManager::INotification)
+        END_INTERFACE_MAP
     };
 };
 
