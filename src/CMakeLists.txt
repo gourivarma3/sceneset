@@ -48,9 +48,14 @@ set(COMMON_LIBRARIES
 message(STATUS "Common include directories: ${COMMON_INCLUDE_DIRS}")
 message(STATUS "Common libraries: ${COMMON_LIBRARIES}")
 
+if(NOT DEFINED SCENESET_DEFAULT_APPNAME)
+    set(SCENESET_DEFAULT_APPNAME "" CACHE STRING "Default application name for SceneSet")
+endif()
+
 include(GNUInstallDirs)
 target_include_directories(${TARGET} PRIVATE ${COMMON_INCLUDE_DIRS})
 target_link_libraries(${TARGET} PRIVATE ${COMMON_LIBRARIES} systemd)
+target_compile_definitions(${TARGET} PRIVATE SCENESET_DEFAULT_APPNAME="${SCENESET_DEFAULT_APPNAME}")
 
 INSTALL (TARGETS ${TARGET}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}

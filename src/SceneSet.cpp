@@ -18,9 +18,35 @@
  */
 
 #include "SceneSet.h"
+#include <fstream>
+
+#ifndef SCENESET_DEFAULT_APPNAME
+#define SCENESET_DEFAULT_APPNAME ""
+#endif
+
+#define SCENESET_CONFIG_FILE "/opt/sceneset_app.conf"
+
+static std::string getDefaultAppName() {
+    std::ifstream configFile(SCENESET_CONFIG_FILE);
+    if (configFile.is_open()) {
+        std::string appName;
+        std::getline(configFile, appName);
+
+        if (!appName.empty()) {
+            std::cout << "Using sceneset default app from config file: " << appName << std::endl;
+            return appName;
+        }
+    }
+
+    std::string appDefault = SCENESET_DEFAULT_APPNAME;
+    if (!appDefault.empty()) {
+        std::cout << "Using sceneset default app: " << appDefault << std::endl;
+    }
+    return appDefault;
+}
 
 SceneSetApp::SceneSetApp()
-    :  m_act_cv(), m_isActive(false), m_lock(), m_appManager(nullptr), m_preinstallManager(nullptr), m_appManagerEventHandler(nullptr), m_preinstallManagerEventHandler(nullptr), m_appmgrCallsign("org.rdk.AppManager"), m_preinstallCallsign("org.rdk.PreinstallManager"), m_referenceAppId([]() { const char* env = std::getenv("SCENESET_DEFAULT_APPNAME"); return env ? env : ""; }()), m_comrpcPath("/tmp/communicator"), m_launchThread(nullptr), m_stopLaunchThread(false), m_appLaunched(false), m_launchThreadMutex() {
+    :  m_act_cv(), m_isActive(false), m_lock(), m_appManager(nullptr), m_preinstallManager(nullptr), m_appManagerEventHandler(nullptr), m_preinstallManagerEventHandler(nullptr), m_appmgrCallsign("org.rdk.AppManager"), m_preinstallCallsign("org.rdk.PreinstallManager"), m_referenceAppId(getDefaultAppName()), m_comrpcPath("/tmp/communicator"), m_launchThread(nullptr), m_stopLaunchThread(false), m_appLaunched(false), m_launchThreadMutex() {
 }
 
 SceneSetApp::~SceneSetApp() {
