@@ -55,6 +55,10 @@ public:
     bool startPreinstall();
     bool isReferenceAppInstalled();
     void checkAndLaunchIfAlreadyInstalled();
+    bool isFactoryAppsCopied();
+    void markFactoryAppsCopied();
+    bool copyFactoryAppsToPreinstall();
+    void cleanupPreinstallFolder();
     void waitForTermSignal();
     static void handleTerminationSignal(int signal);
     void onTerminate();

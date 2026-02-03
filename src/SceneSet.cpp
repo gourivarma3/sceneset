@@ -19,12 +19,24 @@
 
 #include "SceneSet.h"
 #include <fstream>
+#include <filesystem>
+#include <string_view>
+#include <optional>
 
 #ifndef SCENESET_DEFAULT_APPNAME
 #define SCENESET_DEFAULT_APPNAME ""
 #endif
 
+#ifndef FACTORY_APP_PATH
+#define FACTORY_APP_PATH ""
+#endif
+
+#ifndef APP_PREINSTALL_DIRECTORY
+#define APP_PREINSTALL_DIRECTORY ""
+#endif
+
 #define SCENESET_CONFIG_FILE "/opt/sceneset_app.conf"
+#define FACTORY_APPS_COPIED_MARKER "/opt/persistent/.sceneset_factory_apps_copied"
 
 static std::string getDefaultAppName() {
     std::ifstream configFile(SCENESET_CONFIG_FILE);
@@ -178,7 +190,7 @@ bool SceneSetApp::unRegisterForPreinstallEvents() {
 
 bool SceneSetApp::launchDefaultApp() {
     if (m_referenceAppId.empty()) {
-        std::cout << "No app name specified in SCENESET_REFERENCE_APPID env variable." << std::endl;
+        std::cout << "No reference app specified" << std::endl;
         return false;
     }
     std::cout << "Launching default app: " << m_referenceAppId << std::endl;
@@ -256,9 +268,177 @@ bool SceneSetApp::isReferenceAppInstalled() {
     return false;
 }
 
+bool SceneSetApp::isFactoryAppsCopied() {
+    if (std::filesystem::exists(FACTORY_APPS_COPIED_MARKER)) {
+        std::cout << "Factory apps marker file exists at: " << FACTORY_APPS_COPIED_MARKER << std::endl;
+        return true;
+    }
+    std::cout << "Factory apps marker file does not exist. This is the first boot." << std::endl;
+    return false;
+}
+
+void SceneSetApp::markFactoryAppsCopied() {
+    std::ofstream markerFile(FACTORY_APPS_COPIED_MARKER);
+    if (markerFile.is_open()) {
+        markerFile << "Factory apps copied on first boot" << std::endl;
+        markerFile.close();
+        std::cout << "Factory apps marker file created at: " << FACTORY_APPS_COPIED_MARKER << std::endl;
+    } else {
+        std::cerr << "Failed to create factory apps marker file at: " << FACTORY_APPS_COPIED_MARKER << std::endl;
+    }
+}
+
+bool SceneSetApp::copyFactoryAppsToPreinstall() {
+    namespace fs = std::filesystem;
+    
+    std::cout << "Copying factory apps from " << FACTORY_APP_PATH << " to " << APP_PREINSTALL_DIRECTORY << std::endl;
+
+    fs::path sourcePath(FACTORY_APP_PATH);
+    fs::path destPath(APP_PREINSTALL_DIRECTORY);
+
+    if (!fs::exists(sourcePath)) {
+        std::cerr << "Failed to open factory apps location: " << FACTORY_APP_PATH << std::endl;
+        return false;
+    }
+
+    // Create preinstall directory if it doesn't exist
+    if (!fs::exists(destPath)) {
+        std::cout << "Creating preinstall directory: " << APP_PREINSTALL_DIRECTORY << std::endl;
+        try {
+            fs::create_directories(destPath);
+        } catch (const fs::filesystem_error& e) {
+            std::cerr << "Failed to create preinstall directory: " << e.what() << std::endl;
+            return false;
+        }
+    }
+
+    // Copy bundle files from factory location to preinstall folder
+    // Each bundle file (e.g., com.rdkcentral.refui+1.0.0.bolt) will be copied into a folder named after the package (e.g., com.rdkcentral.refui)
+    int fileCount = 0;
+
+    // Lambda to extract package name from bundle filename.
+    auto extractPackageName = [](std::string_view fileName) -> std::optional<std::string> {
+        if (fileName.empty()) {
+            return std::nullopt;
+        }
+        
+        // Find '+' separator and extract package name before it
+        if (auto plusPos = fileName.find('+'); plusPos != std::string_view::npos) {
+            return std::string(fileName.substr(0, plusPos));
+        }
+        
+        // If no '+' found, use filename without extension
+        if (auto dotPos = fileName.find_last_of('.'); dotPos != std::string_view::npos) {
+            return std::string(fileName.substr(0, dotPos));
+        }
+        
+        return std::string(fileName);
+    };
+
+    try {
+        for (const auto& entry : fs::directory_iterator(sourcePath)) {
+            if (!fs::is_regular_file(entry.status())) {
+                continue; // Skip directories and non-regular files
+            }
+
+            const std::string fileName = entry.path().filename().string();
+            
+            auto packageNameOpt = extractPackageName(fileName);
+            
+            if (!packageNameOpt.has_value() || packageNameOpt->empty()) {
+                std::cerr << "Could not extract package name from: " << fileName << std::endl;
+                continue;
+            }
+            
+            const std::string& packageName = *packageNameOpt;
+
+            // Create package directory in preinstall folder
+            fs::path packageDir = destPath / packageName;
+            
+            try {
+                if (!fs::exists(packageDir)) {
+                    std::cout << "Creating package directory: " << packageName << std::endl;
+                    fs::create_directories(packageDir);
+                }
+
+                // Copy the bundle file as package.ralf into the package directory
+                fs::path destination = packageDir / "package.ralf";
+                std::cout << "Copying bundle: " << fileName << " to " << packageName << "/package.ralf" << std::endl;
+                
+                fs::copy_file(entry.path(), destination, 
+                             fs::copy_options::overwrite_existing);
+                fileCount++;
+                std::cout << "Successfully copied bundle: " << fileName << " as package.ralf" << std::endl;
+                
+            } catch (const fs::filesystem_error& e) {
+                std::cerr << "Failed to copy bundle: " << fileName 
+                          << " - " << e.what() << std::endl;
+            }
+        }
+    } catch (const fs::filesystem_error& e) {
+        std::cerr << "Error iterating directory: " << e.what() << std::endl;
+        return false;
+    }
+
+    if (fileCount > 0) {
+        std::cout << "Successfully copied " << fileCount << " factory app bundles to preinstall folder" << std::endl;
+        markFactoryAppsCopied();
+        return true;
+    } else {
+        std::cout << "No factory app bundles found to copy" << std::endl;
+        markFactoryAppsCopied();
+        return true;
+    }
+}
+
+void SceneSetApp::cleanupPreinstallFolder() {
+    namespace fs = std::filesystem;
+    
+    std::cout << "Cleaning up preinstall folder: " << APP_PREINSTALL_DIRECTORY << std::endl;
+    
+    const fs::path preinstallPath(APP_PREINSTALL_DIRECTORY);
+    
+    if (!fs::exists(preinstallPath)) {
+        std::cout << "Preinstall directory does not exist, nothing to clean up" << std::endl;
+        return;
+    }
+    
+    try {
+        int removedCount = 0;
+        for (const auto& entry : fs::directory_iterator(preinstallPath)) {
+            const auto entryName = entry.path().filename().string();
+            
+            try {
+                if (const auto status = entry.status(); fs::is_directory(status)) {
+                    std::cout << "Removing directory: " << entryName << std::endl;
+                    fs::remove_all(entry.path());
+                    removedCount++;
+                    std::cout << "Successfully removed directory: " << entryName << std::endl;
+                } else if (fs::is_regular_file(status)) {
+                    std::cout << "Removing file: " << entryName << std::endl;
+                    fs::remove(entry.path());
+                    removedCount++;
+                    std::cout << "Successfully removed file: " << entryName << std::endl;
+                }
+            } catch (const fs::filesystem_error& e) {
+                std::cerr << "Failed to remove: " << entryName
+                          << " - " << e.what() << std::endl;
+            }
+        }
+        
+        if (removedCount > 0) {
+            std::cout << "Successfully cleaned up " << removedCount << " items from preinstall folder" << std::endl;
+        } else {
+            std::cout << "No items found to clean up in preinstall folder" << std::endl;
+        }
+    } catch (const fs::filesystem_error& e) {
+        std::cerr << "Error cleaning up preinstall folder: " << e.what() << std::endl;
+    }
+}
+
 void SceneSetApp::checkAndLaunchIfAlreadyInstalled() {
     if (!m_appLaunched) {
-        std::cout << "Checking if reference app is already installed" << std::endl;
+        std::cout << "Checking if reference app is installed" << std::endl;
         if (isReferenceAppInstalled()) {
             bool expected = false;
             if (m_appLaunched.compare_exchange_strong(expected, true)) {
@@ -313,7 +493,17 @@ void SceneSetApp::run() {
     registerForPreinstallEvents();
     registerForAppEvents();
 
-    // Start preinstall first
+    // Copy factory apps to preinstall folder on first boot only
+    if (!isFactoryAppsCopied()) {
+        std::cout << "First boot detected. Copying factory apps to preinstall folder." << std::endl;
+        if (!copyFactoryAppsToPreinstall()) {
+            std::cerr << "Failed to copy factory apps. Continuing with preinstall anyway." << std::endl;
+        }
+    } else {
+        std::cout << "Factory apps already copied on first boot. Skipping copy." << std::endl;
+    }
+
+    // Start preinstall
     std::cout << "Starting preinstall process" << std::endl;
     if (!startPreinstall()) {
         std::cerr << "Preinstall process failed to trigger" << std::endl;
@@ -465,14 +655,16 @@ void SceneSetApp::PreinstallManagerEventHandler::OnAppInstallationStatus(const s
             
             std::cout << "Package: " << packageId << ", State: " << state << std::endl;
             
-            // Check if this is the reference app and it is installed
+            // Check if this is the reference app and it is installed/updated
             if (!instance.m_referenceAppId.empty() &&
                 packageId == instance.m_referenceAppId &&
                 state == "INSTALLED") {
                 bool expected = false;
                 if (instance.m_appLaunched.compare_exchange_strong(expected, true)) {
-                    std::cout << "Reference app '" << packageId << "' installed via preinstall. Launching default app." << std::endl;
+                    std::cout << "Reference app '" << packageId << "' " << state << " via preinstall. Launching default app." << std::endl;
                     instance.startLaunchThread();
+                    // Clean up preinstall folder after reference app is started
+                    instance.cleanupPreinstallFolder();
                 }
                 break;
             }
