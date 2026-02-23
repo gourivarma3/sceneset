@@ -505,16 +505,14 @@ void SceneSetApp::run() {
 
     // Start preinstall - this is SYNCHRONOUS and BLOCKS until all bundles are installed
     std::cout << "Starting preinstall process" << std::endl;
-    if (!startPreinstall()) {
-        std::cerr << "Preinstall process failed" << std::endl;
+    if (startPreinstall()) {
+        std::cout << "Preinstall process completed. Proceeding with cleaning up preinstall folder" << std::endl;
+        // Clean up preinstall folder after preinstall succeeds
+        cleanupPreinstallFolder();
     }
 
-    // At this point, startPreinstall() has completed and all bundles are already installed
     // Check if reference app is installed and launch it
     checkAndLaunchIfAlreadyInstalled();
-    
-    // Clean up preinstall folder after app launch
-    cleanupPreinstallFolder();
 
     waitForTermSignal();
 }
@@ -624,9 +622,7 @@ void SceneSetApp::PreinstallManagerEventHandler::OnAppInstallationStatus(const s
     }
 
     // Note: startPreinstall() is SYNCHRONOUS and blocks until all installations complete.
-    // These events are dispatched asynchronously via worker pool, so they may arrive 
-    // AFTER startPreinstall() has returned and the app has already been launched.
-    // This handler is kept for logging and monitoring purposes only.
+    // This handler is kept for logging and monitoring purposes .
 
     // Parse JSON array
     JsonArray packages;
