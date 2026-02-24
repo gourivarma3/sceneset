@@ -503,13 +503,15 @@ void SceneSetApp::run() {
         std::cout << "Factory apps already copied on first boot. Skipping copy." << std::endl;
     }
 
-    // Start preinstall
+    // Start preinstall - this is SYNCHRONOUS and BLOCKS until all bundles are installed
     std::cout << "Starting preinstall process" << std::endl;
-    if (!startPreinstall()) {
-        std::cerr << "Preinstall process failed to trigger" << std::endl;
+    if (startPreinstall()) {
+        std::cout << "Preinstall process completed. Proceeding with cleaning up preinstall folder" << std::endl;
+        // Clean up preinstall folder after preinstall succeeds
+        cleanupPreinstallFolder();
     }
 
-    // Check if app is already installed and launch if not launched already from preinstall events
+    // Check if reference app is installed and launch it
     checkAndLaunchIfAlreadyInstalled();
 
     waitForTermSignal();
@@ -619,9 +621,9 @@ void SceneSetApp::PreinstallManagerEventHandler::OnAppInstallationStatus(const s
         return;
     }
 
-    SceneSetApp& instance = SceneSetApp::getInstance();
+    // Note: startPreinstall() is SYNCHRONOUS and blocks until all installations complete.
+    // This handler is kept for logging and monitoring purposes .
 
-    // Format: [{"packageId":"appId","version":"x.y.z","state":"INSTALLED"}]
     // Parse JSON array
     JsonArray packages;
     if (!packages.FromString(jsonresponse)) {
@@ -629,15 +631,15 @@ void SceneSetApp::PreinstallManagerEventHandler::OnAppInstallationStatus(const s
         return;
     }
 
-    // Iterate through the array as we get response in jsonarray format
+    // Iterate through the array and log installation status
     JsonArray::Iterator index = packages.Elements();
     while (index.Next()) {
         const JsonValue& element = index.Current();
-        // Get the JSON object
         if (element.Content() == JsonValue::type::OBJECT) {
             JsonObject packageObj = element.Object();
             std::string packageId;
             std::string state;
+            std::string version;
             
             if (packageObj.HasLabel("packageId")) {
                 const JsonValue& pkgIdValue = packageObj["packageId"];
@@ -653,21 +655,14 @@ void SceneSetApp::PreinstallManagerEventHandler::OnAppInstallationStatus(const s
                 }
             }
             
-            std::cout << "Package: " << packageId << ", State: " << state << std::endl;
-            
-            // Check if this is the reference app and it is installed/updated
-            if (!instance.m_referenceAppId.empty() &&
-                packageId == instance.m_referenceAppId &&
-                state == "INSTALLED") {
-                bool expected = false;
-                if (instance.m_appLaunched.compare_exchange_strong(expected, true)) {
-                    std::cout << "Reference app '" << packageId << "' " << state << " via preinstall. Launching default app." << std::endl;
-                    instance.startLaunchThread();
-                    // Clean up preinstall folder after reference app is started
-                    instance.cleanupPreinstallFolder();
+            if (packageObj.HasLabel("version")) {
+                const JsonValue& versionValue = packageObj["version"];
+                if (versionValue.Content() == JsonValue::type::STRING) {
+                    version = versionValue.String();
                 }
-                break;
             }
+            
+            std::cout << "Package: " << packageId << ", Version: " << version << ", State: " << state << std::endl;
         }
     }
 }
