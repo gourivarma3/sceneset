@@ -52,7 +52,7 @@ public:
     bool unRegisterForAppEvents();
     bool unRegisterForPreinstallEvents();
     bool launchDefaultApp();
-    bool startPreinstall();
+    bool startPreinstall(bool forceInstall);
     bool isReferenceAppInstalled();
     void checkAndLaunchIfAlreadyInstalled();
     bool isFactoryAppsCopied();

@@ -202,12 +202,13 @@ bool SceneSetApp::launchDefaultApp() {
     return true;
 }
 
-bool SceneSetApp::startPreinstall() {
+bool SceneSetApp::startPreinstall(bool forceInstall) {
     if (m_preinstallManager == nullptr) {
         std::cerr << "PreinstallManager is not initialized, cannot start preinstall." << std::endl;
         return false;
     }
-    Core::hresult result = m_preinstallManager->StartPreinstall(false);  // StartPreinstall is called with argument false . Not doing force install
+    std::cout << "Starting preinstall with forceInstall=" << (forceInstall ? "true" : "false") << std::endl;
+    Core::hresult result = m_preinstallManager->StartPreinstall(forceInstall);
     if (result != Core::ERROR_NONE) {
         std::cerr << "StartPreinstall failed with error code: " << result << std::endl;
         return false;
@@ -313,27 +314,7 @@ bool SceneSetApp::copyFactoryAppsToPreinstall() {
     }
 
     // Copy bundle files from factory location to preinstall folder
-    // Each bundle file (e.g., com.rdkcentral.refui+1.0.0.bolt) will be copied into a folder named after the package (e.g., com.rdkcentral.refui)
     int fileCount = 0;
-
-    // Lambda to extract package name from bundle filename.
-    auto extractPackageName = [](std::string_view fileName) -> std::optional<std::string> {
-        if (fileName.empty()) {
-            return std::nullopt;
-        }
-        
-        // Find '+' separator and extract package name before it
-        if (auto plusPos = fileName.find('+'); plusPos != std::string_view::npos) {
-            return std::string(fileName.substr(0, plusPos));
-        }
-        
-        // If no '+' found, use filename without extension
-        if (auto dotPos = fileName.find_last_of('.'); dotPos != std::string_view::npos) {
-            return std::string(fileName.substr(0, dotPos));
-        }
-        
-        return std::string(fileName);
-    };
 
     try {
         for (const auto& entry : fs::directory_iterator(sourcePath)) {
@@ -343,32 +324,16 @@ bool SceneSetApp::copyFactoryAppsToPreinstall() {
 
             const std::string fileName = entry.path().filename().string();
             
-            auto packageNameOpt = extractPackageName(fileName);
-            
-            if (!packageNameOpt.has_value() || packageNameOpt->empty()) {
-                std::cerr << "Could not extract package name from: " << fileName << std::endl;
-                continue;
-            }
-            
-            const std::string& packageName = *packageNameOpt;
-
-            // Create package directory in preinstall folder
-            fs::path packageDir = destPath / packageName;
+            // Copy the bundle file directly to the preinstall directory
+            fs::path destination = destPath / fileName;
             
             try {
-                if (!fs::exists(packageDir)) {
-                    std::cout << "Creating package directory: " << packageName << std::endl;
-                    fs::create_directories(packageDir);
-                }
-
-                // Copy the bundle file as package.ralf into the package directory
-                fs::path destination = packageDir / "package.ralf";
-                std::cout << "Copying bundle: " << fileName << " to " << packageName << "/package.ralf" << std::endl;
+                std::cout << "Copying bundle: " << fileName << " to preinstall directory" << std::endl;
                 
                 fs::copy_file(entry.path(), destination, 
                              fs::copy_options::overwrite_existing);
                 fileCount++;
-                std::cout << "Successfully copied bundle: " << fileName << " as package.ralf" << std::endl;
+                std::cout << "Successfully copied bundle: " << fileName << std::endl;
                 
             } catch (const fs::filesystem_error& e) {
                 std::cerr << "Failed to copy bundle: " << fileName 
@@ -493,9 +458,12 @@ void SceneSetApp::run() {
     registerForPreinstallEvents();
     registerForAppEvents();
 
+    // Determine if this is a Factory Setting Reset (FSR) / first boot scenario
+    bool isFactoryReset = !isFactoryAppsCopied();
+    
     // Copy factory apps to preinstall folder on first boot only
-    if (!isFactoryAppsCopied()) {
-        std::cout << "First boot detected. Copying factory apps to preinstall folder." << std::endl;
+    if (isFactoryReset) {
+        std::cout << "First boot/Factory reset detected. Copying factory apps to preinstall folder." << std::endl;
         if (!copyFactoryAppsToPreinstall()) {
             std::cerr << "Failed to copy factory apps. Continuing with preinstall anyway." << std::endl;
         }
@@ -504,8 +472,10 @@ void SceneSetApp::run() {
     }
 
     // Start preinstall - this is SYNCHRONOUS and BLOCKS until all bundles are installed
+    // Use forceInstall=true for FSR cases (force reinstall all packages)
+    // Use forceInstall=false for normal boots (only install if newer version)
     std::cout << "Starting preinstall process" << std::endl;
-    if (startPreinstall()) {
+    if (startPreinstall(isFactoryReset)) {
         std::cout << "Preinstall process completed. Proceeding with cleaning up preinstall folder" << std::endl;
         // Clean up preinstall folder after preinstall succeeds
         cleanupPreinstallFolder();
