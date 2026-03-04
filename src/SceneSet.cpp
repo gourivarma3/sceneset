@@ -58,7 +58,7 @@ static std::string getDefaultAppName() {
 }
 
 SceneSetApp::SceneSetApp()
-    :  m_act_cv(), m_isActive(false), m_lock(), m_appManager(nullptr), m_preinstallManager(nullptr), m_appManagerEventHandler(nullptr), m_preinstallManagerEventHandler(nullptr), m_appmgrCallsign("org.rdk.AppManager"), m_preinstallCallsign("org.rdk.PreinstallManager"), m_referenceAppId(getDefaultAppName()), m_comrpcPath("/tmp/communicator"), m_launchThread(nullptr), m_stopLaunchThread(false), m_appLaunched(false), m_launchThreadMutex() {
+    :  m_act_cv(), m_isActive(false), m_lock(), m_appManager(nullptr), m_preinstallManager(nullptr), m_appManagerEventHandler(nullptr), m_preinstallManagerEventHandler(nullptr), m_appmgrCallsign("org.rdk.AppManager"), m_preinstallCallsign("org.rdk.PreinstallManager"), m_referenceAppId(getDefaultAppName()), m_comrpcPath("/tmp/communicator"), m_launchThread(nullptr), m_stopLaunchThread(false), m_appLaunched(false), m_pendingRestart(false), m_launchThreadMutex() {
 }
 
 SceneSetApp::~SceneSetApp() {
@@ -198,6 +198,23 @@ bool SceneSetApp::launchDefaultApp() {
     if (result != Core::ERROR_NONE) {
         std::cerr << "LaunchApp failed with error code: " << result << std::endl;
         return false;
+    }
+    return true;
+}
+
+bool SceneSetApp::killReferenceApp() {
+    if (m_referenceAppId.empty()) {
+        std::cout << "No reference app specified" << std::endl;
+        return false;
+    }
+    if (m_appManager == nullptr) {
+        std::cerr << "AppManager is not initialized" << std::endl;
+        return false;
+    }
+    std::cout << "Killing reference app: " << m_referenceAppId << std::endl;
+    Core::hresult result = m_appManager->KillApp(m_referenceAppId);
+    if (result == Core::ERROR_NONE) {
+        std::cout << "Successfully requested kill of reference app" << std::endl;
     }
     return true;
 }
@@ -492,6 +509,23 @@ SceneSetApp::AppManagerEventHandler::~AppManagerEventHandler() {}
 
 void SceneSetApp::AppManagerEventHandler::OnAppInstalled(const string &appId, const string &version) {
     std::cout << "App Installed: " << appId << " Version: " << version << std::endl;
+    
+    SceneSetApp& instance = SceneSetApp::getInstance();
+    if (!instance.m_referenceAppId.empty() && appId == instance.m_referenceAppId) {
+        if (instance.m_appLaunched) {
+            std::cout << "New version of reference app '" << appId << "' (version: " << version << ") installed. App is running, killing and restarting reference app." << std::endl;
+            // Kill the running app  before launching the new version
+            // The lifecycle events will handle the state transitions
+            instance.m_pendingRestart = true;
+            if (instance.killReferenceApp()) {
+                std::cout << "Kill requested. App will be restarted when it reaches UNLOADED state." << std::endl;
+                // Note: The launch will be triggered by OnAppLifecycleStateChanged when app reaches UNLOADED
+            } else {
+                std::cerr << "Failed to kill reference app" << std::endl;
+                instance.m_pendingRestart = false;
+            }
+        }
+    }
 }
 
 void SceneSetApp::AppManagerEventHandler::OnAppUninstalled(const string &appId) {
@@ -505,11 +539,27 @@ void SceneSetApp::AppManagerEventHandler::OnAppLifecycleStateChanged(const strin
               << " from " << getAppStateString(oldState) << " (" << static_cast<int>(oldState) << ")"
               << " to " << getAppStateString(newState) << " (" << static_cast<int>(newState) << ")" << std::endl;
     if (!instance.m_referenceAppId.empty() && appId == instance.m_referenceAppId) {
-        if (oldState == Exchange::IAppManager::AppLifecycleState::APP_STATE_TERMINATING &&
-            newState == Exchange::IAppManager::AppLifecycleState::APP_STATE_UNLOADED &&
-            errorReason == Exchange::IAppManager::AppErrorReason::APP_ERROR_ABORT) {
-            std::cout << "App " << appId << " terminated with ABORT error. Restarting reference app." << std::endl;
-            instance.startLaunchThread();
+        // Track if reference app is running using m_appLaunched
+        if (newState == Exchange::IAppManager::AppLifecycleState::APP_STATE_RUNNING ||
+            newState == Exchange::IAppManager::AppLifecycleState::APP_STATE_ACTIVE) {
+            instance.m_appLaunched = true;
+        } else if (newState == Exchange::IAppManager::AppLifecycleState::APP_STATE_UNLOADED) {
+            instance.m_appLaunched = false;
+            
+            // Check if we need to restart after new version installation
+            if (instance.m_pendingRestart) {
+                std::cout << "App reached UNLOADED state after new version installation. Restarting with new version." << std::endl;
+                instance.m_pendingRestart = false;
+                instance.startLaunchThread();
+            }
+            // Handle ABORT error case for crash restart (only if not pending restart from new version)
+            else if (oldState == Exchange::IAppManager::AppLifecycleState::APP_STATE_TERMINATING &&
+                     errorReason == Exchange::IAppManager::AppErrorReason::APP_ERROR_ABORT) {
+                std::cout << "App " << appId << " terminated with ABORT error. Restarting reference app." << std::endl;
+                instance.startLaunchThread();
+            }
+        } else if (newState == Exchange::IAppManager::AppLifecycleState::APP_STATE_TERMINATING) {
+            instance.m_appLaunched = false;
         }
     }
 }
