@@ -52,9 +52,14 @@ public:
     bool unRegisterForAppEvents();
     bool unRegisterForPreinstallEvents();
     bool launchDefaultApp();
-    bool startPreinstall();
+    bool killReferenceApp();
+    bool startPreinstall(bool forceInstall);
     bool isReferenceAppInstalled();
     void checkAndLaunchIfAlreadyInstalled();
+    bool isFactoryAppsCopied();
+    void markFactoryAppsCopied();
+    bool copyFactoryAppsToPreinstall();
+    void cleanupPreinstallFolder();
     void waitForTermSignal();
     static void handleTerminationSignal(int signal);
     void onTerminate();
@@ -76,6 +81,7 @@ private:
     std::unique_ptr<std::thread> m_launchThread;
     std::atomic<bool> m_stopLaunchThread;
     std::atomic<bool> m_appLaunched;
+    std::atomic<bool> m_pendingRestart;
     std::mutex m_launchThreadMutex;
 
     void stopCurrentLaunchThread();

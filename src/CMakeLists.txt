@@ -48,9 +48,38 @@ set(COMMON_LIBRARIES
 message(STATUS "Common include directories: ${COMMON_INCLUDE_DIRS}")
 message(STATUS "Common libraries: ${COMMON_LIBRARIES}")
 
+if(NOT DEFINED SCENESET_DEFAULT_APPNAME)
+    set(SCENESET_DEFAULT_APPNAME "" CACHE STRING "Default application name for SceneSet")
+endif()
+
+if(NOT DEFINED FACTORY_APP_PATH)
+    set(FACTORY_APP_PATH "" CACHE STRING "Factory apps location")
+endif()
+
+if(NOT DEFINED APP_PREINSTALL_DIRECTORY)
+    set(APP_PREINSTALL_DIRECTORY "" CACHE STRING "Preinstall apps folder")
+endif()
+
+if(FACTORY_APP_PATH AND NOT APP_PREINSTALL_DIRECTORY)
+    message(FATAL_ERROR "FACTORY_APP_PATH is set but APP_PREINSTALL_DIRECTORY is not set")
+endif()
+
+if(NOT SCENESET_DEFAULT_APPNAME)
+    message(WARNING "SCENESET_DEFAULT_APPNAME is not set")
+endif()
+
+if(NOT FACTORY_APP_PATH)
+    message(WARNING "FACTORY_APP_PATH is not set")
+endif()
+
 include(GNUInstallDirs)
 target_include_directories(${TARGET} PRIVATE ${COMMON_INCLUDE_DIRS})
 target_link_libraries(${TARGET} PRIVATE ${COMMON_LIBRARIES} systemd)
+target_compile_definitions(${TARGET} PRIVATE 
+    SCENESET_DEFAULT_APPNAME="${SCENESET_DEFAULT_APPNAME}"
+    FACTORY_APP_PATH="${FACTORY_APP_PATH}"
+    APP_PREINSTALL_DIRECTORY="${APP_PREINSTALL_DIRECTORY}"
+)
 
 INSTALL (TARGETS ${TARGET}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}

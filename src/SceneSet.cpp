@@ -18,9 +18,47 @@
  */
 
 #include "SceneSet.h"
+#include <fstream>
+#include <filesystem>
+#include <string_view>
+#include <optional>
+
+#ifndef SCENESET_DEFAULT_APPNAME
+#define SCENESET_DEFAULT_APPNAME ""
+#endif
+
+#ifndef FACTORY_APP_PATH
+#define FACTORY_APP_PATH ""
+#endif
+
+#ifndef APP_PREINSTALL_DIRECTORY
+#define APP_PREINSTALL_DIRECTORY ""
+#endif
+
+#define SCENESET_CONFIG_FILE "/opt/sceneset_app.conf"
+#define FACTORY_APPS_COPIED_MARKER "/opt/persistent/.sceneset_factory_apps_copied"
+
+static std::string getDefaultAppName() {
+    std::ifstream configFile(SCENESET_CONFIG_FILE);
+    if (configFile.is_open()) {
+        std::string appName;
+        std::getline(configFile, appName);
+
+        if (!appName.empty()) {
+            std::cout << "Using sceneset default app from config file: " << appName << std::endl;
+            return appName;
+        }
+    }
+
+    std::string appDefault = SCENESET_DEFAULT_APPNAME;
+    if (!appDefault.empty()) {
+        std::cout << "Using sceneset default app: " << appDefault << std::endl;
+    }
+    return appDefault;
+}
 
 SceneSetApp::SceneSetApp()
-    :  m_act_cv(), m_isActive(false), m_lock(), m_appManager(nullptr), m_preinstallManager(nullptr), m_appManagerEventHandler(nullptr), m_preinstallManagerEventHandler(nullptr), m_appmgrCallsign("org.rdk.AppManager"), m_preinstallCallsign("org.rdk.PreinstallManager"), m_referenceAppId([]() { const char* env = std::getenv("SCENESET_DEFAULT_APPNAME"); return env ? env : ""; }()), m_comrpcPath("/tmp/communicator"), m_launchThread(nullptr), m_stopLaunchThread(false), m_appLaunched(false), m_launchThreadMutex() {
+    :  m_act_cv(), m_isActive(false), m_lock(), m_appManager(nullptr), m_preinstallManager(nullptr), m_appManagerEventHandler(nullptr), m_preinstallManagerEventHandler(nullptr), m_appmgrCallsign("org.rdk.AppManager"), m_preinstallCallsign("org.rdk.PreinstallManager"), m_referenceAppId(getDefaultAppName()), m_comrpcPath("/tmp/communicator"), m_launchThread(nullptr), m_stopLaunchThread(false), m_appLaunched(false), m_pendingRestart(false), m_launchThreadMutex() {
 }
 
 SceneSetApp::~SceneSetApp() {
@@ -152,7 +190,7 @@ bool SceneSetApp::unRegisterForPreinstallEvents() {
 
 bool SceneSetApp::launchDefaultApp() {
     if (m_referenceAppId.empty()) {
-        std::cout << "No app name specified in SCENESET_REFERENCE_APPID env variable." << std::endl;
+        std::cout << "No reference app specified" << std::endl;
         return false;
     }
     std::cout << "Launching default app: " << m_referenceAppId << std::endl;
@@ -164,12 +202,30 @@ bool SceneSetApp::launchDefaultApp() {
     return true;
 }
 
-bool SceneSetApp::startPreinstall() {
+bool SceneSetApp::killReferenceApp() {
+    if (m_referenceAppId.empty()) {
+        std::cout << "No reference app specified" << std::endl;
+        return false;
+    }
+    if (m_appManager == nullptr) {
+        std::cerr << "AppManager is not initialized" << std::endl;
+        return false;
+    }
+    std::cout << "Killing reference app: " << m_referenceAppId << std::endl;
+    Core::hresult result = m_appManager->KillApp(m_referenceAppId);
+    if (result == Core::ERROR_NONE) {
+        std::cout << "Successfully requested kill of reference app" << std::endl;
+    }
+    return true;
+}
+
+bool SceneSetApp::startPreinstall(bool forceInstall) {
     if (m_preinstallManager == nullptr) {
         std::cerr << "PreinstallManager is not initialized, cannot start preinstall." << std::endl;
         return false;
     }
-    Core::hresult result = m_preinstallManager->StartPreinstall(false);  // StartPreinstall is called with argument false . Not doing force install
+    std::cout << "Starting preinstall with forceInstall=" << (forceInstall ? "true" : "false") << std::endl;
+    Core::hresult result = m_preinstallManager->StartPreinstall(forceInstall);
     if (result != Core::ERROR_NONE) {
         std::cerr << "StartPreinstall failed with error code: " << result << std::endl;
         return false;
@@ -230,9 +286,141 @@ bool SceneSetApp::isReferenceAppInstalled() {
     return false;
 }
 
+bool SceneSetApp::isFactoryAppsCopied() {
+    if (std::filesystem::exists(FACTORY_APPS_COPIED_MARKER)) {
+        std::cout << "Factory apps marker file exists at: " << FACTORY_APPS_COPIED_MARKER << std::endl;
+        return true;
+    }
+    std::cout << "Factory apps marker file does not exist. This is the first boot." << std::endl;
+    return false;
+}
+
+void SceneSetApp::markFactoryAppsCopied() {
+    std::ofstream markerFile(FACTORY_APPS_COPIED_MARKER);
+    if (markerFile.is_open()) {
+        markerFile << "Factory apps copied on first boot" << std::endl;
+        markerFile.close();
+        std::cout << "Factory apps marker file created at: " << FACTORY_APPS_COPIED_MARKER << std::endl;
+    } else {
+        std::cerr << "Failed to create factory apps marker file at: " << FACTORY_APPS_COPIED_MARKER << std::endl;
+    }
+}
+
+bool SceneSetApp::copyFactoryAppsToPreinstall() {
+    namespace fs = std::filesystem;
+    
+    std::cout << "Copying factory apps from " << FACTORY_APP_PATH << " to " << APP_PREINSTALL_DIRECTORY << std::endl;
+
+    fs::path sourcePath(FACTORY_APP_PATH);
+    fs::path destPath(APP_PREINSTALL_DIRECTORY);
+
+    if (!fs::exists(sourcePath)) {
+        std::cerr << "Failed to open factory apps location: " << FACTORY_APP_PATH << std::endl;
+        return false;
+    }
+
+    // Create preinstall directory if it doesn't exist
+    if (!fs::exists(destPath)) {
+        std::cout << "Creating preinstall directory: " << APP_PREINSTALL_DIRECTORY << std::endl;
+        try {
+            fs::create_directories(destPath);
+        } catch (const fs::filesystem_error& e) {
+            std::cerr << "Failed to create preinstall directory: " << e.what() << std::endl;
+            return false;
+        }
+    }
+
+    // Copy bundle files from factory location to preinstall folder
+    int fileCount = 0;
+
+    try {
+        for (const auto& entry : fs::directory_iterator(sourcePath)) {
+            if (!fs::is_regular_file(entry.status())) {
+                continue; // Skip directories and non-regular files
+            }
+
+            const std::string fileName = entry.path().filename().string();
+            
+            // Copy the bundle file directly to the preinstall directory
+            fs::path destination = destPath / fileName;
+            
+            try {
+                std::cout << "Copying bundle: " << fileName << " to preinstall directory" << std::endl;
+                
+                fs::copy_file(entry.path(), destination, 
+                             fs::copy_options::overwrite_existing);
+                fileCount++;
+                std::cout << "Successfully copied bundle: " << fileName << std::endl;
+                
+            } catch (const fs::filesystem_error& e) {
+                std::cerr << "Failed to copy bundle: " << fileName 
+                          << " - " << e.what() << std::endl;
+            }
+        }
+    } catch (const fs::filesystem_error& e) {
+        std::cerr << "Error iterating directory: " << e.what() << std::endl;
+        return false;
+    }
+
+    if (fileCount > 0) {
+        std::cout << "Successfully copied " << fileCount << " factory app bundles to preinstall folder" << std::endl;
+        markFactoryAppsCopied();
+        return true;
+    } else {
+        std::cout << "No factory app bundles found to copy" << std::endl;
+        markFactoryAppsCopied();
+        return true;
+    }
+}
+
+void SceneSetApp::cleanupPreinstallFolder() {
+    namespace fs = std::filesystem;
+    
+    std::cout << "Cleaning up preinstall folder: " << APP_PREINSTALL_DIRECTORY << std::endl;
+    
+    const fs::path preinstallPath(APP_PREINSTALL_DIRECTORY);
+    
+    if (!fs::exists(preinstallPath)) {
+        std::cout << "Preinstall directory does not exist, nothing to clean up" << std::endl;
+        return;
+    }
+    
+    try {
+        int removedCount = 0;
+        for (const auto& entry : fs::directory_iterator(preinstallPath)) {
+            const auto entryName = entry.path().filename().string();
+            
+            try {
+                if (const auto status = entry.status(); fs::is_directory(status)) {
+                    std::cout << "Removing directory: " << entryName << std::endl;
+                    fs::remove_all(entry.path());
+                    removedCount++;
+                    std::cout << "Successfully removed directory: " << entryName << std::endl;
+                } else if (fs::is_regular_file(status)) {
+                    std::cout << "Removing file: " << entryName << std::endl;
+                    fs::remove(entry.path());
+                    removedCount++;
+                    std::cout << "Successfully removed file: " << entryName << std::endl;
+                }
+            } catch (const fs::filesystem_error& e) {
+                std::cerr << "Failed to remove: " << entryName
+                          << " - " << e.what() << std::endl;
+            }
+        }
+        
+        if (removedCount > 0) {
+            std::cout << "Successfully cleaned up " << removedCount << " items from preinstall folder" << std::endl;
+        } else {
+            std::cout << "No items found to clean up in preinstall folder" << std::endl;
+        }
+    } catch (const fs::filesystem_error& e) {
+        std::cerr << "Error cleaning up preinstall folder: " << e.what() << std::endl;
+    }
+}
+
 void SceneSetApp::checkAndLaunchIfAlreadyInstalled() {
     if (!m_appLaunched) {
-        std::cout << "Checking if reference app is already installed" << std::endl;
+        std::cout << "Checking if reference app is installed" << std::endl;
         if (isReferenceAppInstalled()) {
             bool expected = false;
             if (m_appLaunched.compare_exchange_strong(expected, true)) {
@@ -287,13 +475,30 @@ void SceneSetApp::run() {
     registerForPreinstallEvents();
     registerForAppEvents();
 
-    // Start preinstall first
-    std::cout << "Starting preinstall process" << std::endl;
-    if (!startPreinstall()) {
-        std::cerr << "Preinstall process failed to trigger" << std::endl;
+    // Determine if this is a Factory Setting Reset (FSR) / first boot scenario
+    bool isFactoryReset = !isFactoryAppsCopied();
+    
+    // Copy factory apps to preinstall folder on first boot only
+    if (isFactoryReset) {
+        std::cout << "First boot/Factory reset detected. Copying factory apps to preinstall folder." << std::endl;
+        if (!copyFactoryAppsToPreinstall()) {
+            std::cerr << "Failed to copy factory apps. Continuing with preinstall anyway." << std::endl;
+        }
+    } else {
+        std::cout << "Factory apps already copied on first boot. Skipping copy." << std::endl;
     }
 
-    // Check if app is already installed and launch if not launched already from preinstall events
+    // Start preinstall - this is SYNCHRONOUS and BLOCKS until all bundles are installed
+    // Use forceInstall=true for FSR cases (force reinstall all packages)
+    // Use forceInstall=false for normal boots (only install if newer version)
+    std::cout << "Starting preinstall process" << std::endl;
+    if (startPreinstall(isFactoryReset)) {
+        std::cout << "Preinstall process completed. Proceeding with cleaning up preinstall folder" << std::endl;
+        // Clean up preinstall folder after preinstall succeeds
+        cleanupPreinstallFolder();
+    }
+
+    // Check if reference app is installed and launch it
     checkAndLaunchIfAlreadyInstalled();
 
     waitForTermSignal();
@@ -304,6 +509,23 @@ SceneSetApp::AppManagerEventHandler::~AppManagerEventHandler() {}
 
 void SceneSetApp::AppManagerEventHandler::OnAppInstalled(const string &appId, const string &version) {
     std::cout << "App Installed: " << appId << " Version: " << version << std::endl;
+    
+    SceneSetApp& instance = SceneSetApp::getInstance();
+    if (!instance.m_referenceAppId.empty() && appId == instance.m_referenceAppId) {
+        if (instance.m_appLaunched) {
+            std::cout << "New version of reference app '" << appId << "' (version: " << version << ") installed. App is running, killing and restarting reference app." << std::endl;
+            // Kill the running app  before launching the new version
+            // The lifecycle events will handle the state transitions
+            instance.m_pendingRestart = true;
+            if (instance.killReferenceApp()) {
+                std::cout << "Kill requested. App will be restarted when it reaches UNLOADED state." << std::endl;
+                // Note: The launch will be triggered by OnAppLifecycleStateChanged when app reaches UNLOADED
+            } else {
+                std::cerr << "Failed to kill reference app" << std::endl;
+                instance.m_pendingRestart = false;
+            }
+        }
+    }
 }
 
 void SceneSetApp::AppManagerEventHandler::OnAppUninstalled(const string &appId) {
@@ -317,11 +539,27 @@ void SceneSetApp::AppManagerEventHandler::OnAppLifecycleStateChanged(const strin
               << " from " << getAppStateString(oldState) << " (" << static_cast<int>(oldState) << ")"
               << " to " << getAppStateString(newState) << " (" << static_cast<int>(newState) << ")" << std::endl;
     if (!instance.m_referenceAppId.empty() && appId == instance.m_referenceAppId) {
-        if (oldState == Exchange::IAppManager::AppLifecycleState::APP_STATE_TERMINATING &&
-            newState == Exchange::IAppManager::AppLifecycleState::APP_STATE_UNLOADED &&
-            errorReason == Exchange::IAppManager::AppErrorReason::APP_ERROR_ABORT) {
-            std::cout << "App " << appId << " terminated with ABORT error. Restarting reference app." << std::endl;
-            instance.startLaunchThread();
+        // Track if reference app is running using m_appLaunched
+        if (newState == Exchange::IAppManager::AppLifecycleState::APP_STATE_RUNNING ||
+            newState == Exchange::IAppManager::AppLifecycleState::APP_STATE_ACTIVE) {
+            instance.m_appLaunched = true;
+        } else if (newState == Exchange::IAppManager::AppLifecycleState::APP_STATE_UNLOADED) {
+            instance.m_appLaunched = false;
+            
+            // Check if we need to restart after new version installation
+            if (instance.m_pendingRestart) {
+                std::cout << "App reached UNLOADED state after new version installation. Restarting with new version." << std::endl;
+                instance.m_pendingRestart = false;
+                instance.startLaunchThread();
+            }
+            // Handle ABORT error case for crash restart (only if not pending restart from new version)
+            else if (oldState == Exchange::IAppManager::AppLifecycleState::APP_STATE_TERMINATING &&
+                     errorReason == Exchange::IAppManager::AppErrorReason::APP_ERROR_ABORT) {
+                std::cout << "App " << appId << " terminated with ABORT error. Restarting reference app." << std::endl;
+                instance.startLaunchThread();
+            }
+        } else if (newState == Exchange::IAppManager::AppLifecycleState::APP_STATE_TERMINATING) {
+            instance.m_appLaunched = false;
         }
     }
 }
@@ -403,9 +641,9 @@ void SceneSetApp::PreinstallManagerEventHandler::OnAppInstallationStatus(const s
         return;
     }
 
-    SceneSetApp& instance = SceneSetApp::getInstance();
+    // Note: startPreinstall() is SYNCHRONOUS and blocks until all installations complete.
+    // This handler is kept for logging and monitoring purposes .
 
-    // Format: [{"packageId":"appId","version":"x.y.z","state":"INSTALLED"}]
     // Parse JSON array
     JsonArray packages;
     if (!packages.FromString(jsonresponse)) {
@@ -413,15 +651,15 @@ void SceneSetApp::PreinstallManagerEventHandler::OnAppInstallationStatus(const s
         return;
     }
 
-    // Iterate through the array as we get response in jsonarray format
+    // Iterate through the array and log installation status
     JsonArray::Iterator index = packages.Elements();
     while (index.Next()) {
         const JsonValue& element = index.Current();
-        // Get the JSON object
         if (element.Content() == JsonValue::type::OBJECT) {
             JsonObject packageObj = element.Object();
             std::string packageId;
             std::string state;
+            std::string version;
             
             if (packageObj.HasLabel("packageId")) {
                 const JsonValue& pkgIdValue = packageObj["packageId"];
@@ -437,19 +675,14 @@ void SceneSetApp::PreinstallManagerEventHandler::OnAppInstallationStatus(const s
                 }
             }
             
-            std::cout << "Package: " << packageId << ", State: " << state << std::endl;
-            
-            // Check if this is the reference app and it is installed
-            if (!instance.m_referenceAppId.empty() &&
-                packageId == instance.m_referenceAppId &&
-                state == "INSTALLED") {
-                bool expected = false;
-                if (instance.m_appLaunched.compare_exchange_strong(expected, true)) {
-                    std::cout << "Reference app '" << packageId << "' installed via preinstall. Launching default app." << std::endl;
-                    instance.startLaunchThread();
+            if (packageObj.HasLabel("version")) {
+                const JsonValue& versionValue = packageObj["version"];
+                if (versionValue.Content() == JsonValue::type::STRING) {
+                    version = versionValue.String();
                 }
-                break;
             }
+            
+            std::cout << "Package: " << packageId << ", Version: " << version << ", State: " << state << std::endl;
         }
     }
 }
