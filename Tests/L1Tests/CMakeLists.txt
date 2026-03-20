@@ -24,6 +24,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Find required packages
 find_package(GTest REQUIRED)
+find_package(libralf REQUIRED)
 
 # Set the executable name
 set(TEST_EXECUTABLE SceneSetL1TestsIN)
@@ -47,6 +48,7 @@ target_link_libraries(${TEST_EXECUTABLE}
     ${GTEST_MAIN_LIBRARIES}
     ${WPEFRAMEWORK_LIB_DIR}/libWPEFrameworkCore.so
     ${WPEFRAMEWORK_LIB_DIR}/libWPEFrameworkCOM.so
+    ralf
     pthread
     systemd
     dl

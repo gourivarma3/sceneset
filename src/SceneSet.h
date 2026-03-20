@@ -98,7 +98,7 @@ private:
     void stopDownloadMonitorThread();
     void monitorDownloadDirectory();
     bool processDownloadedPackage(const std::filesystem::path& packagePath);
-    bool copyPackageToPreinstallDirectory(const std::filesystem::path& sourceFile);
+    bool movePackageToPreinstallDirectory(const std::filesystem::path& sourceFile);
     bool getPackageMetadataViaRalfLibrary(const std::filesystem::path& packagePath, std::string& packageAppId, std::string& packageVersion) const;
     std::string getInstalledReferenceAppVersion() const;
     bool fetchPluginConfigValue(const std::string& callsign, const std::string& configKey, std::string& value) const;

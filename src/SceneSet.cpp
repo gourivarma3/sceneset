@@ -23,6 +23,7 @@
 #include <cstring>
 #include <fstream>
 #include <filesystem>
+#include <limits.h>
 #include <poll.h>
 #include <sys/inotify.h>
 #include <unistd.h>
@@ -153,8 +154,8 @@ bool SceneSetApp::initialize() {
     std::cout << "Successfully opened " << m_preinstallCallsign << " interface" << std::endl;
 
     resolveDynamicDirectories();
-    if (m_downloadDirectory.empty() || m_preinstallDirectory.empty()) {
-        std::cerr << "Failed to get valid Download(" << m_downloadDirectory << ") or Preinstall(" << m_preinstallDirectory << ") directory." << std::endl;
+    if (m_preinstallDirectory.empty()) {
+        std::cerr << "Failed to get valid appPreinstallDirectory." << std::endl;
         // Clean up.
         if (m_appManager != nullptr) {
             m_appManager->Release();
@@ -165,6 +166,9 @@ bool SceneSetApp::initialize() {
             m_preinstallManager = nullptr;
         }
         return false;
+    }
+    if (m_downloadDirectory.empty()) {
+        std::cout << "downloadDir is empty. Reference app update monitoring will remain disabled." << std::endl;
     }
 
     {
@@ -692,20 +696,29 @@ void SceneSetApp::startDownloadMonitorThread() {
     }
 
     stopDownloadMonitorThread();
-    m_stopDownloadMonitorThread = false;
-    m_downloadMonitorThread = std::make_unique<std::thread>([this]() {
-        monitorDownloadDirectory();
-    });
+    {
+        std::lock_guard<std::mutex> lock(m_downloadMonitorMutex);
+        m_stopDownloadMonitorThread = false;
+        m_downloadMonitorThread = std::make_unique<std::thread>([this]() {
+            monitorDownloadDirectory();
+        });
+    }
 }
 
 void SceneSetApp::stopDownloadMonitorThread() {
-    std::lock_guard<std::mutex> lock(m_downloadMonitorMutex);
-    if (m_downloadMonitorThread && m_downloadMonitorThread->joinable()) {
+    std::unique_ptr<std::thread> threadToJoin;
+    {
+        std::lock_guard<std::mutex> lock(m_downloadMonitorMutex);
         m_stopDownloadMonitorThread = true;
-        m_downloadMonitorThread->join();
-        m_downloadMonitorThread.reset();
+        if (m_downloadMonitorThread && m_downloadMonitorThread->joinable()) {
+            threadToJoin = std::move(m_downloadMonitorThread);
+        } else {
+            m_downloadMonitorThread.reset();
+        }
     }
-    m_stopDownloadMonitorThread = false;
+    if (threadToJoin && threadToJoin->joinable()) {
+        threadToJoin->join();
+    }
 }
 
 void SceneSetApp::monitorDownloadDirectory() {
@@ -782,10 +795,10 @@ bool SceneSetApp::processDownloadedPackage(const std::filesystem::path& packageP
         }
     }
 
-    return copyPackageToPreinstallDirectory(packagePath);
+    return movePackageToPreinstallDirectory(packagePath);
 }
 
-bool SceneSetApp::copyPackageToPreinstallDirectory(const std::filesystem::path& sourceFile) {
+bool SceneSetApp::movePackageToPreinstallDirectory(const std::filesystem::path& sourceFile) {
     namespace fs = std::filesystem;
     const fs::path preinstallDir(m_preinstallDirectory);
 
@@ -810,17 +823,15 @@ bool SceneSetApp::copyPackageToPreinstallDirectory(const std::filesystem::path& 
     }
 
     const fs::path destination = preinstallDir / sourceFile.filename();
-    const fs::path tempDestination = destination.string() + ".part";
 
     try {
-        fs::copy_file(sourceFile, tempDestination, fs::copy_options::overwrite_existing);
-        fs::rename(tempDestination, destination);
-        std::cout << "Staged downloaded reference package: " << destination << std::endl;
+        std::error_code cleanupError;
+        fs::remove(destination, cleanupError);
+        fs::rename(sourceFile, destination);
+        std::cout << "Moved downloaded reference package to preinstall: " << destination << std::endl;
         return true;
     } catch (const fs::filesystem_error& e) {
-        std::cerr << "Failed staging package " << sourceFile << ": " << e.what() << std::endl;
-        std::error_code cleanupError;
-        fs::remove(tempDestination, cleanupError);
+        std::cerr << "Failed moving package " << sourceFile << " to " << destination << ": " << e.what() << std::endl;
         return false;
     }
 }
