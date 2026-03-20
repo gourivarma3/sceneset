@@ -18,10 +18,6 @@ SceneSet is designed to run as a systemd service that:
 - **Signal Handling**: Graceful shutdown on SIGTERM signals
 - **Thunder Integration**: Uses WPEFramework COMRPC for AppManager communication
 
-## Architecture
-
-SceneSet architecture, detailed flows, and PNG regeneration steps are documented in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
-
 ## Configuration
 
 ### Environment Variables

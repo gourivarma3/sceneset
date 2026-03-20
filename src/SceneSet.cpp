@@ -44,8 +44,8 @@
 #endif
 
 // Use common-config provided value as fallback.
-#ifndef RDK_APP_CERT_PATH
-#define RDK_APP_CERT_PATH "/etc/rdk/certs"
+#ifndef DAC_APP_CERT_PATH
+#define DAC_APP_CERT_PATH "/etc/rdk/certs"
 #endif
 
 #define SCENESET_CONFIG_FILE "/opt/sceneset_app.conf"
@@ -91,8 +91,7 @@ SceneSetApp::~SceneSetApp() {
 }
 
 bool SceneSetApp::initialize() {
-    const char *thunderAccess = std::getenv("THUNDER_ACCESS");
-    std::string envThunderAccess = (thunderAccess != nullptr) ? thunderAccess : m_comrpcPath;
+    const std::string envThunderAccess = getThunderAccessPath();
 
     std::cout << "Thunder Access Path: " << envThunderAccess << std::endl;
 
@@ -772,7 +771,8 @@ bool SceneSetApp::processDownloadedPackage(const std::filesystem::path& packageP
     std::string packageAppId;
     std::string packageVersion;
 
-    if (!ralf_support::ExtractPackageMetadata(packagePath, std::filesystem::path(RDK_APP_CERT_PATH), packageAppId, packageVersion)) {
+    if (!ralf_support::ExtractPackageMetadata(packagePath, std::filesystem::path(DAC_APP_CERT_PATH), packageAppId, packageVersion)) {
+        std::cerr << "Failed to extract metadata from downloaded package: " << packagePath.filename() << std::endl;
         return false;
     }
 
@@ -783,6 +783,9 @@ bool SceneSetApp::processDownloadedPackage(const std::filesystem::path& packageP
     if (m_appLaunched.load()) {
         const std::string installedVersion = getInstalledReferenceAppVersion();
         if (!installedVersion.empty() && installedVersion == packageVersion) {
+            std::cout << "Reference app '" << packageAppId
+                      << "' is running with installed version " << installedVersion
+                      << "; skipping staging for downloaded package " << packagePath.filename() << std::endl;
             return false;
         }
     }
@@ -801,7 +804,7 @@ bool SceneSetApp::movePackageToPreinstallDirectory(const std::filesystem::path& 
 
     std::error_code ec;
     if (!fs::exists(sourceFile, ec) || ec) {
-        std::cout << "Source package disappeared before copy: " << sourceFile << std::endl;
+        std::cerr << "Source package disappeared before copy: " << sourceFile << std::endl;
         return false;
     }
 
@@ -823,6 +826,20 @@ bool SceneSetApp::movePackageToPreinstallDirectory(const std::filesystem::path& 
         std::cout << "Moved downloaded reference package to preinstall: " << destination << std::endl;
         return true;
     } catch (const fs::filesystem_error& e) {
+        if (e.code() == std::errc::cross_device_link) {
+            try {
+                std::error_code cleanupError;
+                fs::remove(destination, cleanupError);
+                fs::copy_file(sourceFile, destination, fs::copy_options::overwrite_existing);
+                fs::remove(sourceFile, cleanupError);
+                std::cout << "Copied downloaded reference package to preinstall across filesystems: " << destination << std::endl;
+                return true;
+            } catch (const fs::filesystem_error& e2) {
+                std::cerr << "Failed copying package " << sourceFile << " to " << destination
+                          << " after cross-filesystem rename failure: " << e2.what() << std::endl;
+                return false;
+            }
+        }
         std::cerr << "Failed moving package " << sourceFile << " to " << destination << ": " << e.what() << std::endl;
         return false;
     }
@@ -871,7 +888,8 @@ std::string SceneSetApp::getInstalledReferenceAppVersion() const {
 bool SceneSetApp::fetchPluginConfigValue(const std::string& callsign, const std::string& configKey, std::string& value) const {
     value.clear();
 
-    auto shellClient = Core::ProxyType<RPC::CommunicatorClient>::Create(Core::NodeId(m_comrpcPath.c_str()));
+    const std::string thunderAccessPath = getThunderAccessPath();
+    auto shellClient = Core::ProxyType<RPC::CommunicatorClient>::Create(Core::NodeId(thunderAccessPath.c_str()));
     if (!shellClient.IsValid()) {
         return false;
     }
@@ -905,6 +923,14 @@ bool SceneSetApp::fetchPluginConfigValue(const std::string& callsign, const std:
     targetShell->Release();
     controllerShell->Release();
     return !value.empty();
+}
+
+std::string SceneSetApp::getThunderAccessPath() const {
+    const char* thunderAccess = std::getenv("THUNDER_ACCESS");
+    if (thunderAccess != nullptr && thunderAccess[0] != '\0') {
+        return thunderAccess;
+    }
+    return m_comrpcPath;
 }
 
 void SceneSetApp::resolveDynamicDirectories() {

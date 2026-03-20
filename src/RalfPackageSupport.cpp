@@ -45,21 +45,34 @@ bool ExtractPackageMetadata(const std::filesystem::path& packagePath,
     ralf::VerificationBundle verificationBundle;
     size_t certCount = 0;
 
-    std::error_code certEc;
-    if (std::filesystem::exists(certDir, certEc) && std::filesystem::is_directory(certDir, certEc)) {
-        for (const auto& dirEntry : std::filesystem::directory_iterator(certDir, std::filesystem::directory_options::skip_permission_denied, certEc)) {
-            if (certEc) {
-                break;
-            }
-            if (!dirEntry.is_regular_file()) {
-                continue;
-            }
-            auto certResult = ralf::Certificate::loadFromFile(dirEntry.path().string());
-            if (!certResult.is_error()) {
-                verificationBundle.addCertificate(certResult.value());
-                ++certCount;
+    try {
+        std::error_code certEc;
+        if (std::filesystem::exists(certDir, certEc) && !certEc &&
+            std::filesystem::is_directory(certDir, certEc) && !certEc) {
+            for (const auto& dirEntry : std::filesystem::directory_iterator(certDir, std::filesystem::directory_options::skip_permission_denied, certEc)) {
+                if (certEc) {
+                    std::cerr << "Error while scanning cert directory " << certDir << ": " << certEc.message() << std::endl;
+                    break;
+                }
+
+                std::error_code entryEc;
+                if (!dirEntry.is_regular_file(entryEc)) {
+                    if (entryEc) {
+                        std::cerr << "Skipping cert entry due to stat error " << dirEntry.path() << ": " << entryEc.message() << std::endl;
+                    }
+                    continue;
+                }
+
+                auto certResult = ralf::Certificate::loadFromFile(dirEntry.path().string());
+                if (!certResult.is_error()) {
+                    verificationBundle.addCertificate(certResult.value());
+                    ++certCount;
+                }
             }
         }
+    } catch (const std::filesystem::filesystem_error& fsError) {
+        std::cerr << "Filesystem error while loading certificates from " << certDir << ": " << fsError.what() << std::endl;
+        return false;
     }
 
     if (certCount == 0) {

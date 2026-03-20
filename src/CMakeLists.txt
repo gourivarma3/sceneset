@@ -20,7 +20,10 @@ set (TARGET "sceneset")
 add_executable(${TARGET} SceneSet.cpp RalfPackageSupport.cpp main.cpp)
 
 find_package(PkgConfig REQUIRED)
-find_package(libralf REQUIRED)
+find_package(libralf CONFIG REQUIRED)
+if(NOT libralf_FOUND)
+    find_package(libralf REQUIRED)
+endif()
 
 pkg_check_modules(WPEFRAMEWORKCORE REQUIRED WPEFrameworkCore)
 pkg_check_modules(WPEFRAMEWORKPLUGINS REQUIRED WPEFrameworkPlugins)
@@ -41,7 +44,6 @@ set(COMMON_LIBRARIES
     ${WPEFRAMEWORKPLUGINS_LIBRARIES}
     ${WPEFRAMEWORKWEBSOCKET_LIBRARIES}
     ${WPEFRAMEWORKDEFINITIONS_LIBRARIES}
-    ralf
     )
 
 message(STATUS "Common include directories: ${COMMON_INCLUDE_DIRS}")
@@ -84,11 +86,26 @@ endif()
 include(GNUInstallDirs)
 target_include_directories(${TARGET} PRIVATE ${COMMON_INCLUDE_DIRS})
 target_link_libraries(${TARGET} PRIVATE ${COMMON_LIBRARIES} systemd)
+
+if(TARGET ralf-utils::libralf)
+    target_link_libraries(${TARGET} PRIVATE ralf-utils::libralf)
+elseif(TARGET libralf)
+    target_link_libraries(${TARGET} PRIVATE libralf)
+elseif(TARGET ralf-utils::libralf-static)
+    message(WARNING "Only static libralf target available. Linking ralf-utils::libralf-static.")
+    target_link_libraries(${TARGET} PRIVATE ralf-utils::libralf-static)
+elseif(TARGET libralf-static)
+    message(WARNING "Only static libralf target available. Linking libralf-static.")
+    target_link_libraries(${TARGET} PRIVATE libralf-static)
+else()
+    message(FATAL_ERROR "libralf package found but no usable CMake target exported (expected ralf-utils::libralf, libralf, ralf-utils::libralf-static, or libralf-static)")
+endif()
+
 target_compile_definitions(${TARGET} PRIVATE
     SCENESET_DEFAULT_APPNAME="${SCENESET_DEFAULT_APPNAME}"
     FACTORY_APP_PATH="${FACTORY_APP_PATH}"
     APP_PREINSTALL_DIRECTORY="${APP_PREINSTALL_DIRECTORY}"
-    RDK_APP_CERT_PATH="${DAC_APP_CERT_PATH}"
+    DAC_APP_CERT_PATH="${DAC_APP_CERT_PATH}"
     DISABLE_REFERENCE_APP_UPDATE=$<BOOL:${DISABLE_REFERENCE_APP_UPDATE}>
 )
 

@@ -24,7 +24,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Find required packages
 find_package(GTest REQUIRED)
-find_package(libralf REQUIRED)
+find_package(libralf CONFIG REQUIRED)
+if(NOT libralf_FOUND)
+    find_package(libralf REQUIRED)
+endif()
 
 # Set the executable name
 set(TEST_EXECUTABLE SceneSetL1TestsIN)
@@ -49,11 +52,24 @@ target_link_libraries(${TEST_EXECUTABLE}
     ${GTEST_MAIN_LIBRARIES}
     ${WPEFRAMEWORK_LIB_DIR}/libWPEFrameworkCore.so
     ${WPEFRAMEWORK_LIB_DIR}/libWPEFrameworkCOM.so
-    ralf
     pthread
     systemd
     dl
 )
+
+if(TARGET ralf-utils::libralf)
+    target_link_libraries(${TEST_EXECUTABLE} PRIVATE ralf-utils::libralf)
+elseif(TARGET libralf)
+    target_link_libraries(${TEST_EXECUTABLE} PRIVATE libralf)
+elseif(TARGET ralf-utils::libralf-static)
+    message(WARNING "Only static libralf target available. Linking ralf-utils::libralf-static.")
+    target_link_libraries(${TEST_EXECUTABLE} PRIVATE ralf-utils::libralf-static)
+elseif(TARGET libralf-static)
+    message(WARNING "Only static libralf target available. Linking libralf-static.")
+    target_link_libraries(${TEST_EXECUTABLE} PRIVATE libralf-static)
+else()
+    message(FATAL_ERROR "libralf package found but no usable CMake target exported (expected ralf-utils::libralf, libralf, ralf-utils::libralf-static, or libralf-static)")
+endif()
 
 # Include directories
 target_include_directories(${TEST_EXECUTABLE}

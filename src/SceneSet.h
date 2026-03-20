@@ -100,6 +100,7 @@ private:
     bool processDownloadedPackage(const std::filesystem::path& packagePath);
     bool movePackageToPreinstallDirectory(const std::filesystem::path& sourceFile);
     std::string getInstalledReferenceAppVersion() const;
+    std::string getThunderAccessPath() const;
     bool fetchPluginConfigValue(const std::string& callsign, const std::string& configKey, std::string& value) const;
     void resolveDynamicDirectories();
 

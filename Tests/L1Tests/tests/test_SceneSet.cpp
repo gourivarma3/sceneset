@@ -25,8 +25,11 @@
 #include <memory>
 #include <thread>
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 
 #include "SceneSet.h"
+#include "RalfPackageSupport.h"
 
 
 class SceneSetTest : public ::testing::Test {
@@ -51,7 +54,7 @@ protected:
 TEST_F(SceneSetTest, SingletonPattern) {
     SceneSetApp& instance1 = SceneSetApp::getInstance();
     SceneSetApp& instance2 = SceneSetApp::getInstance();
-    
+
     EXPECT_EQ(&instance1, &instance2);
 }
 
@@ -75,7 +78,7 @@ TEST_F(SceneSetTest, AppManagerEventHandlerCreation) {
 TEST_F(SceneSetTest, LaunchDefaultAppWithoutEnvVar) {
     unsetenv("SCENESET_DEFAULT_APPNAME");
     SceneSetApp app;
-    
+
     bool result = app.launchDefaultApp();
     EXPECT_FALSE(result);
 }
@@ -85,7 +88,7 @@ TEST_F(SceneSetTest, LaunchDefaultAppWithoutEnvVar) {
 TEST_F(SceneSetTest, InitializationWithoutThunder) {
     setenv("THUNDER_ACCESS", "/invalid/path", 1);
     SceneSetApp app;
-    
+
     bool result = app.initialize();
     EXPECT_FALSE(result);
 }
@@ -101,21 +104,21 @@ TEST_F(SceneSetTest, TerminationSignalHandling) {
 // Test thread safety and concurrent operations
 TEST_F(SceneSetTest, ThreadSafety) {
     SceneSetApp& app = SceneSetApp::getInstance();
-    
+
     // Test that multiple threads can access getInstance safely
     std::vector<std::thread> threads;
     std::vector<SceneSetApp*> instances(10);
-    
+
     for (int i = 0; i < 10; ++i) {
         threads.emplace_back([&instances, i]() {
             instances[i] = &SceneSetApp::getInstance();
         });
     }
-    
+
     for (auto& thread : threads) {
         thread.join();
     }
-    
+
     // All instances should be the same
     for (int i = 1; i < 10; ++i) {
         EXPECT_EQ(instances[0], instances[i]);
@@ -137,3 +140,36 @@ TEST_F(SceneSetTest, UnregisterForAppEvents) {
     EXPECT_FALSE(result);
 }
 
+TEST_F(SceneSetTest, ExtractPackageMetadataReturnsFalseForMissingCertDirectory) {
+    std::string appId;
+    std::string version;
+
+    const std::filesystem::path missingCertDir("/tmp/sceneset_missing_cert_dir");
+    const std::filesystem::path fakePackage("/tmp/sceneset_missing_cert_dir/fake.wgt");
+
+    EXPECT_NO_THROW({
+        const bool result = ralf_support::ExtractPackageMetadata(fakePackage, missingCertDir, appId, version);
+        EXPECT_FALSE(result);
+    });
+}
+
+TEST_F(SceneSetTest, ExtractPackageMetadataReturnsFalseWhenCertPathIsNotDirectory) {
+    std::string appId;
+    std::string version;
+
+    const std::filesystem::path certPathFile("/tmp/sceneset_cert_path_file");
+    const std::filesystem::path fakePackage("/tmp/sceneset_cert_path_file/fake.wgt");
+
+    {
+        std::ofstream file(certPathFile);
+        file << "not a certificate directory" << std::endl;
+    }
+
+    EXPECT_NO_THROW({
+        const bool result = ralf_support::ExtractPackageMetadata(fakePackage, certPathFile, appId, version);
+        EXPECT_FALSE(result);
+    });
+
+    std::error_code ec;
+    std::filesystem::remove(certPathFile, ec);
+}
