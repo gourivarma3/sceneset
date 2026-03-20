@@ -17,7 +17,7 @@
 
 set (TARGET "sceneset")
 
-add_executable(${TARGET} SceneSet.cpp main.cpp)
+add_executable(${TARGET} SceneSet.cpp RalfPackageSupport.cpp main.cpp)
 
 find_package(PkgConfig REQUIRED)
 find_package(libralf REQUIRED)

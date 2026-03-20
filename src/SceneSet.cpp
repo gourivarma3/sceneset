@@ -18,6 +18,7 @@
  */
 
 #include "SceneSet.h"
+#include "RalfPackageSupport.h"
 #include <cerrno>
 #include <chrono>
 #include <cstring>
@@ -27,13 +28,6 @@
 #include <poll.h>
 #include <sys/inotify.h>
 #include <unistd.h>
-#if __has_include(<ralf/Package.h>)
-#include <ralf/Package.h>
-#include <ralf/Certificate.h>
-#elif __has_include(<Package.h>)
-#include <Package.h>
-#include <Certificate.h>
-#endif
 #include <string_view>
 #include <optional>
 
@@ -53,8 +47,6 @@
 #ifndef RDK_APP_CERT_PATH
 #define RDK_APP_CERT_PATH "/etc/rdk/certs"
 #endif
-
-namespace ralf = LIBRALF_NS;
 
 #define SCENESET_CONFIG_FILE "/opt/sceneset_app.conf"
 #define FACTORY_APPS_COPIED_MARKER "/opt/persistent/.sceneset_factory_apps_copied"
@@ -780,7 +772,7 @@ bool SceneSetApp::processDownloadedPackage(const std::filesystem::path& packageP
     std::string packageAppId;
     std::string packageVersion;
 
-    if (!getPackageMetadataViaRalfLibrary(packagePath, packageAppId, packageVersion)) {
+    if (!ralf_support::ExtractPackageMetadata(packagePath, std::filesystem::path(RDK_APP_CERT_PATH), packageAppId, packageVersion)) {
         return false;
     }
 
@@ -834,62 +826,6 @@ bool SceneSetApp::movePackageToPreinstallDirectory(const std::filesystem::path& 
         std::cerr << "Failed moving package " << sourceFile << " to " << destination << ": " << e.what() << std::endl;
         return false;
     }
-}
-
-bool SceneSetApp::getPackageMetadataViaRalfLibrary(const std::filesystem::path& packagePath, std::string& packageAppId, std::string& packageVersion) const {
-    packageAppId.clear();
-    packageVersion.clear();
-
-    ralf::VerificationBundle verificationBundle;
-    size_t certCount = 0;
-
-    const std::filesystem::path certDir(RDK_APP_CERT_PATH);
-    std::error_code certEc;
-    if (std::filesystem::exists(certDir, certEc) && std::filesystem::is_directory(certDir, certEc)) {
-        for (const auto& dirEntry : std::filesystem::directory_iterator(certDir, std::filesystem::directory_options::skip_permission_denied, certEc)) {
-            if (certEc) {
-                break;
-            }
-            if (!dirEntry.is_regular_file()) {
-                continue;
-            }
-            auto certResult = ralf::Certificate::loadFromFile(dirEntry.path().string());
-            if (!certResult.is_error()) {
-                verificationBundle.addCertificate(certResult.value());
-                ++certCount;
-            }
-        }
-    }
-
-    if (certCount == 0) {
-        std::cerr << "No certificates loaded from " << certDir << ". Cannot verify package: " << packagePath << std::endl;
-        return false;
-    }
-
-    auto packageResult = ralf::Package::open(packagePath, verificationBundle, ralf::Package::OpenFlags::CheckCertificateExpiry);
-    if (packageResult.is_error()) {
-        std::cerr << "Failed to open/verify package with libralf: " << packagePath << std::endl;
-        return false;
-    }
-
-    auto metadataResult = packageResult.value().metaData();
-    if (metadataResult.is_error()) {
-        std::cerr << "Failed to parse package metadata with libralf: " << packagePath << std::endl;
-        return false;
-    }
-
-    const auto& metadata = metadataResult.value();
-    if (!metadata.isValid()) {
-        return false;
-    }
-
-    packageAppId = metadata.id();
-    packageVersion = metadata.version().toString();
-    if (packageVersion.empty()) {
-        packageVersion = metadata.versionName();
-    }
-
-    return !packageAppId.empty();
 }
 
 std::string SceneSetApp::getInstalledReferenceAppVersion() const {

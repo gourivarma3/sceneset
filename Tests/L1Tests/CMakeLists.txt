@@ -33,6 +33,7 @@ set(TEST_EXECUTABLE SceneSetL1TestsIN)
 set(TEST_SRC
     tests/test_SceneSet.cpp
     ../../src/SceneSet.cpp
+    ../../src/RalfPackageSupport.cpp
    )
 
 # Create the test executable
