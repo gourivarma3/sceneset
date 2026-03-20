@@ -20,12 +20,12 @@ set (TARGET "sceneset")
 add_executable(${TARGET} SceneSet.cpp main.cpp)
 
 find_package(PkgConfig REQUIRED)
+find_package(libralf REQUIRED)
 
 pkg_check_modules(WPEFRAMEWORKCORE REQUIRED WPEFrameworkCore)
 pkg_check_modules(WPEFRAMEWORKPLUGINS REQUIRED WPEFrameworkPlugins)
 pkg_check_modules(WPEFRAMEWORKWEBSOCKET REQUIRED WPEFrameworkWebSocket)
 pkg_check_modules(WPEFRAMEWORKDEFINITIONS REQUIRED WPEFrameworkDefinitions)
-pkg_check_modules(WPEFRAMEWORKPLUGINS REQUIRED WPEFrameworkPlugins)
 
 
 set(COMMON_INCLUDE_DIRS
@@ -34,7 +34,6 @@ set(COMMON_INCLUDE_DIRS
     ${WPEFRAMEWORKPLUGINS_INCLUDE_DIRS}
     ${WPEFRAMEWORKWEBSOCKET_INCLUDE_DIRS}
     ${WPEFRAMEWORKDEFINITIONS_INCLUDE_DIRS}
-    ${WPEFRAMEWORKPLUGINS_INCLUDE_DIRS}
     )
 
 set(COMMON_LIBRARIES
@@ -42,7 +41,7 @@ set(COMMON_LIBRARIES
     ${WPEFRAMEWORKPLUGINS_LIBRARIES}
     ${WPEFRAMEWORKWEBSOCKET_LIBRARIES}
     ${WPEFRAMEWORKDEFINITIONS_LIBRARIES}
-    ${WPEFRAMEWORKPLUGINS_LIBRARIES}
+    ralf
     )
 
 message(STATUS "Common include directories: ${COMMON_INCLUDE_DIRS}")
@@ -72,13 +71,25 @@ if(NOT FACTORY_APP_PATH)
     message(WARNING "FACTORY_APP_PATH is not set")
 endif()
 
+if(NOT DAC_APP_CERT_PATH)
+    message(WARNING "DAC_APP_CERT_PATH is not set, using default value /etc/rdk/certs")
+    set(DAC_APP_CERT_PATH "/etc/rdk/certs" CACHE STRING "DAC app certificate path")
+endif()
+
+set(DISABLE_REFERENCE_APP_UPDATE OFF CACHE BOOL "Disable reference app update")
+if(DISABLE_REFERENCE_APP_UPDATE)
+    message(WARNING "Reference app update will be disabled, SceneSet will not update the reference app")
+endif()
+
 include(GNUInstallDirs)
 target_include_directories(${TARGET} PRIVATE ${COMMON_INCLUDE_DIRS})
 target_link_libraries(${TARGET} PRIVATE ${COMMON_LIBRARIES} systemd)
-target_compile_definitions(${TARGET} PRIVATE 
+target_compile_definitions(${TARGET} PRIVATE
     SCENESET_DEFAULT_APPNAME="${SCENESET_DEFAULT_APPNAME}"
     FACTORY_APP_PATH="${FACTORY_APP_PATH}"
     APP_PREINSTALL_DIRECTORY="${APP_PREINSTALL_DIRECTORY}"
+    RDK_APP_CERT_PATH="${DAC_APP_CERT_PATH}"
+    DISABLE_REFERENCE_APP_UPDATE=$<BOOL:${DISABLE_REFERENCE_APP_UPDATE}>
 )
 
 INSTALL (TARGETS ${TARGET}

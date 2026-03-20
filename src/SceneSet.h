@@ -26,7 +26,10 @@
 #include <atomic>
 #include <csignal>
 #include <condition_variable>
+#include <filesystem>
 #include <mutex>
+#include <poll.h>
+#include <sys/inotify.h>
 #include <systemd/sd-daemon.h>
 
 #ifndef MODULE_NAME
@@ -77,15 +80,29 @@ private:
     std::string m_appmgrCallsign, m_preinstallCallsign;
     const std::string m_referenceAppId;
     std::string m_comrpcPath;
+    std::string m_downloadDirectory;
+    std::string m_preinstallDirectory;
 
     std::unique_ptr<std::thread> m_launchThread;
     std::atomic<bool> m_stopLaunchThread;
     std::atomic<bool> m_appLaunched;
     std::atomic<bool> m_pendingRestart;
     std::mutex m_launchThreadMutex;
+    std::unique_ptr<std::thread> m_downloadMonitorThread;
+    std::atomic<bool> m_stopDownloadMonitorThread;
+    std::mutex m_downloadMonitorMutex;
 
     void stopCurrentLaunchThread();
     void startLaunchThread();
+    void startDownloadMonitorThread();
+    void stopDownloadMonitorThread();
+    void monitorDownloadDirectory();
+    bool processDownloadedPackage(const std::filesystem::path& packagePath);
+    bool copyPackageToPreinstallDirectory(const std::filesystem::path& sourceFile);
+    bool getPackageMetadataViaRalfLibrary(const std::filesystem::path& packagePath, std::string& packageAppId, std::string& packageVersion) const;
+    std::string getInstalledReferenceAppVersion() const;
+    bool fetchPluginConfigValue(const std::string& callsign, const std::string& configKey, std::string& value) const;
+    void resolveDynamicDirectories();
 
     class AppManagerEventHandler : public Exchange::IAppManager::INotification {
     public:
