@@ -24,6 +24,7 @@
 #include <cstring>
 #include <fstream>
 #include <filesystem>
+#include <fcntl.h>
 #include <limits.h>
 #include <poll.h>
 #include <sys/inotify.h>
@@ -57,6 +58,38 @@ constexpr const char* kPackageManagerDownloadDirKey = "downloadDir";
 constexpr const char* kPreinstallManagerCallsign = "org.rdk.PreinstallManager";
 constexpr const char* kPreinstallDirectoryKey = "appPreinstallDirectory";
 constexpr std::chrono::milliseconds kDownloadedPackageSettleDelayMs(1000);
+volatile std::sig_atomic_t g_terminateRequested = 0;
+
+bool flushFileData(const std::filesystem::path& filePath) {
+    const int fd = ::open(filePath.c_str(), O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        return false;
+    }
+
+    int syncResult = ::fdatasync(fd);
+    if (syncResult != 0) {
+        syncResult = ::fsync(fd);
+    }
+    const int savedErrno = errno;
+    ::close(fd);
+    errno = savedErrno;
+    return (syncResult == 0);
+}
+
+bool isReadyDownloadedFile(const std::filesystem::path& filePath) {
+    std::error_code ec;
+    if (!std::filesystem::exists(filePath, ec) || ec) {
+        return false;
+    }
+    if (!std::filesystem::is_regular_file(filePath, ec) || ec) {
+        return false;
+    }
+    const auto size = std::filesystem::file_size(filePath, ec);
+    if (ec || size == 0) {
+        return false;
+    }
+    return true;
+}
 }
 
 static std::string getDefaultAppName() {
@@ -476,9 +509,17 @@ void SceneSetApp::checkAndLaunchIfAlreadyInstalled() {
 
 void SceneSetApp::waitForTermSignal() {
     std::thread termThread([&]() {
-        while (m_isActive) {
+        while (m_isActive.load()) {
+            if (g_terminateRequested != 0) {
+                g_terminateRequested = 0;
+                onTerminate();
+                continue;
+            }
+
             std::unique_lock<std::mutex> ulock(m_lock);
-            m_act_cv.wait(ulock);
+            m_act_cv.wait_for(ulock, std::chrono::milliseconds(200), [this]() {
+                return !m_isActive.load();
+            });
         }
         std::cout << "Exiting application..." << std::endl;
     });
@@ -486,13 +527,15 @@ void SceneSetApp::waitForTermSignal() {
 }
 
 void SceneSetApp::handleTerminationSignal(int signal) {
-    std::cout << "Received termination signal: " << signal << std::endl;
-    SceneSetApp::getInstance().onTerminate();
+    (void)signal;
+    g_terminateRequested = 1;
 }
 
 void SceneSetApp::onTerminate() {
-    std::unique_lock<std::mutex> ulock(m_lock);
-    m_isActive = false;
+    {
+        std::lock_guard<std::mutex> lock(m_lock);
+        m_isActive = false;
+    }
     m_act_cv.notify_one();
 #if !DISABLE_REFERENCE_APP_UPDATE
     stopDownloadMonitorThread();
@@ -782,10 +825,12 @@ void SceneSetApp::monitorDownloadDirectory() {
                 const auto* event = reinterpret_cast<const WPEFramework::Core::inotify_event*>(ptr);
                 if (event->len > 0 && !(event->mask & IN_ISDIR)) {
                     const auto packagePath = downloadDir / event->name;
-                    // Ensure writer data reaches storage before metadata verification.
-                    ::sync();
                     std::this_thread::sleep_for(kDownloadedPackageSettleDelayMs);
-                    if (!m_stopDownloadMonitorThread) {
+                    if (!m_stopDownloadMonitorThread && isReadyDownloadedFile(packagePath)) {
+                        if (!flushFileData(packagePath)) {
+                            std::cerr << "Warning: failed to flush downloaded file before verification: "
+                                      << packagePath << " error=" << strerror(errno) << std::endl;
+                        }
                         processDownloadedPackage(packagePath);
                     }
                 }
@@ -879,7 +924,10 @@ bool SceneSetApp::movePackageToPreinstallDirectory(const std::filesystem::path& 
         std::error_code cleanupError;
         fs::remove(destination, cleanupError);
         fs::rename(sourceFile, destination);
-        ::sync();
+        if (!flushFileData(destination)) {
+            std::cerr << "Warning: failed to flush staged package file: " << destination
+                      << " error=" << strerror(errno) << std::endl;
+        }
         std::cout << "Moved downloaded reference package to preinstall: " << destination << std::endl;
         return true;
     } catch (const fs::filesystem_error& e) {
@@ -889,7 +937,16 @@ bool SceneSetApp::movePackageToPreinstallDirectory(const std::filesystem::path& 
                 fs::remove(destination, cleanupError);
                 fs::copy_file(sourceFile, destination, fs::copy_options::overwrite_existing);
                 fs::remove(sourceFile, cleanupError);
-                ::sync();
+                if (cleanupError) {
+                    std::cerr << "Copied package to preinstall but failed to remove source file: "
+                              << sourceFile << " error=" << cleanupError.message() << std::endl;
+                    return false;
+                }
+
+                if (!flushFileData(destination)) {
+                    std::cerr << "Warning: failed to flush staged package file: " << destination
+                              << " error=" << strerror(errno) << std::endl;
+                }
                 std::cout << "Copied downloaded reference package to preinstall across filesystems: "
                           << destination << "; removed source file: " << sourceFile << std::endl;
                 return true;

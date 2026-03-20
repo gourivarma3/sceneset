@@ -29,7 +29,9 @@
 #include <fstream>
 #include <sstream>
 
+#define private public
 #include "SceneSet.h"
+#undef private
 #include "RalfPackageSupport.h"
 
 namespace {
@@ -188,4 +190,57 @@ TEST_F(SceneSetTest, ExtractPackageMetadataReturnsFalseWhenCertPathIsNotDirector
 
     std::error_code ec;
     std::filesystem::remove_all(certPathFile, ec);
+}
+
+TEST_F(SceneSetTest, MovePackageToPreinstallDirectoryOverwritesExistingFile) {
+    SceneSetApp app;
+    const auto rootDir = MakeUniqueTempPath("sceneset_stage_overwrite");
+    const auto srcDir = rootDir / "download";
+    const auto dstDir = rootDir / "preinstall";
+    const auto srcFile = srcDir / "bundle.pkg";
+    const auto dstFile = dstDir / "bundle.pkg";
+
+    std::error_code ec;
+    std::filesystem::create_directories(srcDir, ec);
+    std::filesystem::create_directories(dstDir, ec);
+    ASSERT_FALSE(ec);
+
+    {
+        std::ofstream source(srcFile);
+        source << "new_payload";
+    }
+    {
+        std::ofstream destination(dstFile);
+        destination << "old_payload";
+    }
+
+    app.m_preinstallDirectory = dstDir.string();
+    const bool result = app.movePackageToPreinstallDirectory(srcFile);
+    EXPECT_TRUE(result);
+    EXPECT_FALSE(std::filesystem::exists(srcFile));
+    EXPECT_TRUE(std::filesystem::exists(dstFile));
+
+    std::ifstream finalFile(dstFile);
+    std::string finalContent;
+    std::getline(finalFile, finalContent);
+    EXPECT_EQ(finalContent, "new_payload");
+
+    std::filesystem::remove_all(rootDir, ec);
+}
+
+TEST_F(SceneSetTest, MovePackageToPreinstallDirectoryReturnsFalseForMissingSource) {
+    SceneSetApp app;
+    const auto rootDir = MakeUniqueTempPath("sceneset_stage_missing_source");
+    const auto dstDir = rootDir / "preinstall";
+    const auto missingSource = rootDir / "download" / "missing.pkg";
+
+    std::error_code ec;
+    std::filesystem::create_directories(dstDir, ec);
+    ASSERT_FALSE(ec);
+
+    app.m_preinstallDirectory = dstDir.string();
+    const bool result = app.movePackageToPreinstallDirectory(missingSource);
+    EXPECT_FALSE(result);
+
+    std::filesystem::remove_all(rootDir, ec);
 }
