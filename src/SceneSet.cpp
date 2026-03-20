@@ -894,14 +894,14 @@ bool SceneSetApp::fetchPluginConfigValue(const std::string& callsign, const std:
 
     JsonObject configuration;
     const bool parsed = configuration.FromString(targetShell->ConfigLine());
-    if (!parsed || !configuration.HasLabel(configKey) || configuration[configKey].Content() != JsonValue::type::STRING) {
+    if (!parsed || !configuration.HasLabel(configKey.c_str()) || configuration[configKey.c_str()].Content() != JsonValue::type::STRING) {
         std::cerr << "Failed to parse configuration or config key not found or invalid type: " << configKey << std::endl;
         targetShell->Release();
         controllerShell->Release();
         return false;
     }
 
-    value = configuration[configKey].String();
+    value = configuration[configKey.c_str()].String();
     targetShell->Release();
     controllerShell->Release();
     return !value.empty();

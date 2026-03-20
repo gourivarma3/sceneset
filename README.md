@@ -8,7 +8,7 @@ SceneSet is designed to run as a systemd service that:
 - Initializes communication with the Thunder/WPEFramework
 - Registers for reference application lifecycle events via AppManager
 - Automatically launches a specified reference application
-- Monitors reference application state changes and restart the app if it crashes 
+- Monitors reference application state changes and restart the app if it crashes
 - Handles graceful shutdown via signal handling
 
 ## Features
@@ -18,12 +18,16 @@ SceneSet is designed to run as a systemd service that:
 - **Signal Handling**: Graceful shutdown on SIGTERM signals
 - **Thunder Integration**: Uses WPEFramework COMRPC for AppManager communication
 
+## Architecture
+
+SceneSet architecture, detailed flows, and PNG regeneration steps are documented in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
 ## Configuration
 
 ### Environment Variables
 
 - **`SCENESET_DEFAULT_APPNAME`**: Specifies the application to launch at startup
-  
+
 - **`THUNDER_ACCESS`**: Optional path to Thunder communicator socket
   - Default: `/tmp/communicator`
 
@@ -51,4 +55,3 @@ Licensed under the Apache License, Version 2.0. See the source files for full li
 ## Copyright
 
 Copyright 2024 RDK Management
-
