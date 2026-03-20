@@ -56,6 +56,7 @@ constexpr const char* kPackageManagerRdkEmsCallsign = "org.rdk.PackageManagerRDK
 constexpr const char* kPackageManagerDownloadDirKey = "downloadDir";
 constexpr const char* kPreinstallManagerCallsign = "org.rdk.PreinstallManager";
 constexpr const char* kPreinstallDirectoryKey = "appPreinstallDirectory";
+constexpr std::chrono::milliseconds kDownloadedPackageSettleDelayMs(1000);
 }
 
 static std::string getDefaultAppName() {
@@ -715,56 +716,94 @@ void SceneSetApp::stopDownloadMonitorThread() {
 void SceneSetApp::monitorDownloadDirectory() {
     namespace fs = std::filesystem;
 
-    const fs::path downloadDir(m_downloadDirectory);
-    if (!fs::exists(downloadDir) || !fs::is_directory(downloadDir)) {
-        std::cerr << "Download monitor disabled. Invalid downloadDir: " << m_downloadDirectory << std::endl;
-        return;
-    }
+    int inotifyFd = -1;
+    int watchFd = -1;
 
-    const int inotifyFd = inotify_init1(IN_CLOEXEC | IN_NONBLOCK);
-    if (inotifyFd < 0) {
-        std::cerr << "inotify_init1 failed: " << strerror(errno) << std::endl;
-        return;
-    }
-
-    const int watchFd = inotify_add_watch(inotifyFd, m_downloadDirectory.c_str(),
-                                          IN_CLOSE_WRITE | IN_MOVED_TO);
-    if (watchFd < 0) {
-        std::cerr << "inotify_add_watch failed: " << strerror(errno) << std::endl;
-        close(inotifyFd);
-        return;
-    }
-
-    std::cout << "Monitoring download directory for reference app packages: " << m_downloadDirectory << std::endl;
-
-    constexpr size_t EVENT_SIZE = sizeof(inotify_event);
-    constexpr size_t BUF_LEN = (EVENT_SIZE + NAME_MAX + 1) * 16;
-    alignas(inotify_event) char buf[BUF_LEN];
-
-    while (!m_stopDownloadMonitorThread) {
-        struct pollfd pfd = { inotifyFd, POLLIN, 0 };
-        const int ret = poll(&pfd, 1, 500);
-        if (ret < 0) {
-            if (errno == EINTR) continue;
-            std::cerr << "inotify poll failed: " << strerror(errno) << std::endl;
-            break;
+    try {
+        const fs::path downloadDir(m_downloadDirectory);
+        std::error_code ec;
+        const bool downloadDirExists = fs::exists(downloadDir, ec);
+        if (ec) {
+            std::cerr << "Download monitor disabled. Failed to validate downloadDir '" << m_downloadDirectory
+                      << "': " << ec.message() << std::endl;
+            return;
         }
-        if (ret == 0) continue; // timeout — check stop flag
 
-        const ssize_t len = read(inotifyFd, buf, sizeof(buf));
-        if (len <= 0) continue;
+        const bool downloadDirIsDirectory = fs::is_directory(downloadDir, ec);
+        if (ec) {
+            std::cerr << "Download monitor disabled. Failed to query downloadDir type '" << m_downloadDirectory
+                      << "': " << ec.message() << std::endl;
+            return;
+        }
 
-        for (const char* ptr = buf; ptr < buf + len; ) {
-            const auto* event = reinterpret_cast<const inotify_event*>(ptr);
-            if (event->len > 0 && !(event->mask & IN_ISDIR)) {
-                processDownloadedPackage(downloadDir / event->name);
+        if (!downloadDirExists || !downloadDirIsDirectory) {
+            std::cerr << "Download monitor disabled. Invalid downloadDir: " << m_downloadDirectory << std::endl;
+            return;
+        }
+
+        inotifyFd = WPEFramework::Core::inotify_init1(
+            WPEFramework::Core::IN_CLOEXEC | WPEFramework::Core::IN_NONBLOCK);
+        if (inotifyFd < 0) {
+            std::cerr << "inotify_init1 failed: " << strerror(errno) << std::endl;
+            return;
+        }
+
+        watchFd = WPEFramework::Core::inotify_add_watch(
+            inotifyFd,
+            m_downloadDirectory.c_str(),
+            IN_CLOSE_WRITE | IN_MOVED_TO);
+        if (watchFd < 0) {
+            std::cerr << "inotify_add_watch failed: " << strerror(errno) << std::endl;
+            close(inotifyFd);
+            inotifyFd = -1;
+            return;
+        }
+
+        std::cout << "Monitoring download directory for reference app packages: " << m_downloadDirectory << std::endl;
+
+        constexpr size_t EVENT_SIZE = sizeof(WPEFramework::Core::inotify_event);
+        constexpr size_t BUF_LEN = (EVENT_SIZE + NAME_MAX + 1) * 16;
+        alignas(WPEFramework::Core::inotify_event) char buf[BUF_LEN];
+
+        while (!m_stopDownloadMonitorThread) {
+            struct pollfd pfd = { inotifyFd, POLLIN, 0 };
+            const int ret = poll(&pfd, 1, 500);
+            if (ret < 0) {
+                if (errno == EINTR) continue;
+                std::cerr << "inotify poll failed: " << strerror(errno) << std::endl;
+                break;
             }
-            ptr += EVENT_SIZE + event->len;
+            if (ret == 0) continue; // timeout — check stop flag
+
+            const ssize_t len = read(inotifyFd, buf, sizeof(buf));
+            if (len <= 0) continue;
+
+            for (const char* ptr = buf; ptr < buf + len; ) {
+                const auto* event = reinterpret_cast<const WPEFramework::Core::inotify_event*>(ptr);
+                if (event->len > 0 && !(event->mask & IN_ISDIR)) {
+                    const auto packagePath = downloadDir / event->name;
+                    // Ensure writer data reaches storage before metadata verification.
+                    ::sync();
+                    std::this_thread::sleep_for(kDownloadedPackageSettleDelayMs);
+                    if (!m_stopDownloadMonitorThread) {
+                        processDownloadedPackage(packagePath);
+                    }
+                }
+                ptr += EVENT_SIZE + event->len;
+            }
         }
+    } catch (const std::exception& e) {
+        std::cerr << "Unexpected exception in monitorDownloadDirectory: " << e.what() << std::endl;
+    } catch (...) {
+        std::cerr << "Unexpected non-standard exception in monitorDownloadDirectory" << std::endl;
     }
 
-    inotify_rm_watch(inotifyFd, watchFd);
-    close(inotifyFd);
+    if (watchFd >= 0 && inotifyFd >= 0) {
+        WPEFramework::Core::inotify_rm_watch(inotifyFd, watchFd);
+    }
+    if (inotifyFd >= 0) {
+        close(inotifyFd);
+    }
 }
 
 bool SceneSetApp::processDownloadedPackage(const std::filesystem::path& packagePath) {
@@ -808,7 +847,24 @@ bool SceneSetApp::movePackageToPreinstallDirectory(const std::filesystem::path& 
         return false;
     }
 
-    if (!fs::exists(preinstallDir)) {
+    const bool preinstallDirExists = fs::exists(preinstallDir, ec);
+    if (ec) {
+        std::cerr << "Failed to validate preinstall directory '" << preinstallDir << "': "
+                  << ec.message() << std::endl;
+        return false;
+    }
+
+    if (preinstallDirExists && !fs::is_directory(preinstallDir, ec)) {
+        if (ec) {
+            std::cerr << "Failed to query preinstall directory type '" << preinstallDir << "': "
+                      << ec.message() << std::endl;
+        } else {
+            std::cerr << "Configured appPreinstallDirectory is not a directory: " << preinstallDir << std::endl;
+        }
+        return false;
+    }
+
+    if (!preinstallDirExists) {
         try {
             fs::create_directories(preinstallDir);
         } catch (const fs::filesystem_error& e) {
@@ -823,6 +879,7 @@ bool SceneSetApp::movePackageToPreinstallDirectory(const std::filesystem::path& 
         std::error_code cleanupError;
         fs::remove(destination, cleanupError);
         fs::rename(sourceFile, destination);
+        ::sync();
         std::cout << "Moved downloaded reference package to preinstall: " << destination << std::endl;
         return true;
     } catch (const fs::filesystem_error& e) {
@@ -832,7 +889,9 @@ bool SceneSetApp::movePackageToPreinstallDirectory(const std::filesystem::path& 
                 fs::remove(destination, cleanupError);
                 fs::copy_file(sourceFile, destination, fs::copy_options::overwrite_existing);
                 fs::remove(sourceFile, cleanupError);
-                std::cout << "Copied downloaded reference package to preinstall across filesystems: " << destination << std::endl;
+                ::sync();
+                std::cout << "Copied downloaded reference package to preinstall across filesystems: "
+                          << destination << "; removed source file: " << sourceFile << std::endl;
                 return true;
             } catch (const fs::filesystem_error& e2) {
                 std::cerr << "Failed copying package " << sourceFile << " to " << destination

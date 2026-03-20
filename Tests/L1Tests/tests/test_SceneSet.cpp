@@ -27,9 +27,20 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 
 #include "SceneSet.h"
 #include "RalfPackageSupport.h"
+
+namespace {
+std::filesystem::path MakeUniqueTempPath(const std::string& prefix) {
+    const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto tid = std::hash<std::thread::id>{}(std::this_thread::get_id());
+    std::ostringstream name;
+    name << prefix << "_" << now << "_" << tid;
+    return std::filesystem::temp_directory_path() / name.str();
+}
+} // namespace
 
 
 class SceneSetTest : public ::testing::Test {
@@ -144,21 +155,26 @@ TEST_F(SceneSetTest, ExtractPackageMetadataReturnsFalseForMissingCertDirectory) 
     std::string appId;
     std::string version;
 
-    const std::filesystem::path missingCertDir("/tmp/sceneset_missing_cert_dir");
-    const std::filesystem::path fakePackage("/tmp/sceneset_missing_cert_dir/fake.wgt");
+    const std::filesystem::path missingCertDir = MakeUniqueTempPath("sceneset_missing_cert_dir");
+    const std::filesystem::path fakePackage = missingCertDir / "fake.wgt";
+
+    std::error_code ec;
+    std::filesystem::remove_all(missingCertDir, ec);
 
     EXPECT_NO_THROW({
         const bool result = ralf_support::ExtractPackageMetadata(fakePackage, missingCertDir, appId, version);
         EXPECT_FALSE(result);
     });
+
+    std::filesystem::remove_all(missingCertDir, ec);
 }
 
 TEST_F(SceneSetTest, ExtractPackageMetadataReturnsFalseWhenCertPathIsNotDirectory) {
     std::string appId;
     std::string version;
 
-    const std::filesystem::path certPathFile("/tmp/sceneset_cert_path_file");
-    const std::filesystem::path fakePackage("/tmp/sceneset_cert_path_file/fake.wgt");
+    const std::filesystem::path certPathFile = MakeUniqueTempPath("sceneset_cert_path_file");
+    const std::filesystem::path fakePackage = certPathFile.parent_path() / "fake.wgt";
 
     {
         std::ofstream file(certPathFile);
@@ -171,5 +187,5 @@ TEST_F(SceneSetTest, ExtractPackageMetadataReturnsFalseWhenCertPathIsNotDirector
     });
 
     std::error_code ec;
-    std::filesystem::remove(certPathFile, ec);
+    std::filesystem::remove_all(certPathFile, ec);
 }

@@ -28,8 +28,6 @@
 #include <condition_variable>
 #include <filesystem>
 #include <mutex>
-#include <poll.h>
-#include <sys/inotify.h>
 #include <systemd/sd-daemon.h>
 
 #ifndef MODULE_NAME

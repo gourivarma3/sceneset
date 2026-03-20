@@ -25,9 +25,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Find required packages
 find_package(GTest REQUIRED)
 find_package(libralf CONFIG REQUIRED)
-if(NOT libralf_FOUND)
-    find_package(libralf REQUIRED)
-endif()
 
 # Set the executable name
 set(TEST_EXECUTABLE SceneSetL1TestsIN)

@@ -64,10 +64,14 @@ bool ExtractPackageMetadata(const std::filesystem::path& packagePath,
                 }
 
                 auto certResult = ralf::Certificate::loadFromFile(dirEntry.path().string());
-                if (!certResult.is_error()) {
-                    verificationBundle.addCertificate(certResult.value());
-                    ++certCount;
+                if (certResult.is_error()) {
+                    std::cerr << "Failed to load certificate from file: " << dirEntry.path()
+                              << " Error: " << certResult.error().what() << std::endl;
+                    continue;
                 }
+
+                verificationBundle.addCertificate(certResult.value());
+                ++certCount;
             }
         }
     } catch (const std::filesystem::filesystem_error& fsError) {
@@ -82,13 +86,15 @@ bool ExtractPackageMetadata(const std::filesystem::path& packagePath,
 
     auto packageResult = ralf::Package::open(packagePath, verificationBundle, ralf::Package::OpenFlags::CheckCertificateExpiry);
     if (packageResult.is_error()) {
-        std::cerr << "Failed to open/verify package with libralf: " << packagePath << std::endl;
+        std::cerr << "Failed to open/verify package with libralf: " << packagePath
+                  << " Error: " << packageResult.error().what() << std::endl;
         return false;
     }
 
     auto metadataResult = packageResult.value().metaData();
     if (metadataResult.is_error()) {
-        std::cerr << "Failed to parse package metadata with libralf: " << packagePath << std::endl;
+        std::cerr << "Failed to parse package metadata with libralf: " << packagePath
+                  << " Error: " << metadataResult.error().what() << std::endl;
         return false;
     }
 

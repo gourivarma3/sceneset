@@ -21,9 +21,6 @@ add_executable(${TARGET} SceneSet.cpp RalfPackageSupport.cpp main.cpp)
 
 find_package(PkgConfig REQUIRED)
 find_package(libralf CONFIG REQUIRED)
-if(NOT libralf_FOUND)
-    find_package(libralf REQUIRED)
-endif()
 
 pkg_check_modules(WPEFRAMEWORKCORE REQUIRED WPEFrameworkCore)
 pkg_check_modules(WPEFRAMEWORKPLUGINS REQUIRED WPEFrameworkPlugins)

@@ -8,7 +8,7 @@ SceneSet is designed to run as a systemd service that:
 - Initializes communication with the Thunder/WPEFramework
 - Registers for reference application lifecycle events via AppManager
 - Automatically launches a specified reference application
-- Monitors reference application state changes and restart the app if it crashes
+- Monitors reference application state changes and restarts the app if it crashes
 - Handles graceful shutdown via signal handling
 
 ## Features
