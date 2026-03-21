@@ -54,6 +54,11 @@ target_link_libraries(${TEST_EXECUTABLE}
     dl
 )
 
+    # GCC < 9 requires explicit -lstdc++fs when using <filesystem> in C++14 mode.
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 9)
+        target_link_libraries(${TEST_EXECUTABLE} PRIVATE stdc++fs)
+    endif()
+
 if(TARGET ralf-utils::libralf)
     target_link_libraries(${TEST_EXECUTABLE} PRIVATE ralf-utils::libralf)
 elseif(TARGET libralf)

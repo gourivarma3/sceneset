@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <filesystem>
@@ -211,16 +212,11 @@ bool SceneSetApp::initialize() {
 
     resolveDynamicDirectories();
     if (m_preinstallDirectory.empty()) {
-        std::cerr << "Failed to get valid appPreinstallDirectory." << std::endl;
-        // Clean up.
-        if (m_appManager != nullptr) {
-            m_appManager->Release();
-            m_appManager = nullptr;
-        }
-        if (m_preinstallManager != nullptr) {
-            m_preinstallManager->Release();
-            m_preinstallManager = nullptr;
-        }
+        // Fall back to compile-time default if dynamic lookup did not yield a value.
+        m_preinstallDirectory = APP_PREINSTALL_DIRECTORY;
+    }
+    if (m_preinstallDirectory.empty()) {
+        std::cout << "No valid appPreinstallDirectory configured, cannot proceed." << std::endl;
         return false;
     }
     if (m_downloadDirectory.empty()) {

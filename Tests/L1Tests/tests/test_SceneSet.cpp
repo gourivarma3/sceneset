@@ -48,6 +48,10 @@ public:
         app.m_preinstallDirectory = preinstallDirectory;
     }
 
+    static void SetReferenceAppId(SceneSetApp& app, const std::string& referenceAppId) {
+        app.m_referenceAppId = referenceAppId;
+    }
+
     static bool MovePackageToPreinstallDirectory(SceneSetApp& app, const std::filesystem::path& sourcePath) {
         return app.movePackageToPreinstallDirectory(sourcePath);
     }
@@ -311,6 +315,7 @@ TEST_F(SceneSetTest, ProcessDownloadedPackageStagesReferenceBundleWithInjectedMe
     }
 
     SceneSetAppTestPeer::SetPreinstallDirectory(app, dstDir.string());
+    SceneSetAppTestPeer::SetReferenceAppId(app, "TestApp");
     SceneSetAppTestPeer::SetMetadataExtractorForTesting(&FakeExtractMetadataSuccess);
 
     const bool result = SceneSetAppTestPeer::ProcessDownloadedPackage(app, srcFile);
