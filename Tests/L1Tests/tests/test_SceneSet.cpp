@@ -40,6 +40,7 @@ std::filesystem::path MakeUniqueTempPath(const std::string& prefix) {
     name << prefix << "_" << now << "_" << tid;
     return std::filesystem::temp_directory_path() / name.str();
 }
+} // namespace
 
 class SceneSetAppTestPeer {
 public:
@@ -51,7 +52,6 @@ public:
         return app.movePackageToPreinstallDirectory(sourcePath);
     }
 };
-} // namespace
 
 
 class SceneSetTest : public ::testing::Test {
