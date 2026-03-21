@@ -21,6 +21,8 @@
 
 #include <filesystem>
 #include <iostream>
+#include <mutex>
+#include <sys/stat.h>
 
 #if __has_include(<ralf/Package.h>)
 #include <ralf/Package.h>
@@ -34,6 +36,18 @@
 
 namespace ralf = LIBRALF_NS;
 
+namespace {
+struct CertCacheEntry {
+    std::filesystem::path dir;
+    time_t mtime{0};
+    bool valid{false};
+    std::shared_ptr<ralf::VerificationBundle> bundle;
+    size_t certCount{0};
+};
+std::mutex g_certCacheMutex;
+CertCacheEntry g_certCache;
+} // namespace
+
 namespace ralf_support {
 
 bool ExtractPackageMetadata(const std::filesystem::path& packagePath,
@@ -44,41 +58,70 @@ bool ExtractPackageMetadata(const std::filesystem::path& packagePath,
     packageAppId.clear();
     packageVersion.clear();
 
-    ralf::VerificationBundle verificationBundle;
+    std::shared_ptr<ralf::VerificationBundle> verificationBundlePtr;
     size_t certCount = 0;
 
-    try {
-        std::error_code certEc;
-        if (std::filesystem::exists(certDir, certEc) && !certEc &&
-            std::filesystem::is_directory(certDir, certEc) && !certEc) {
-            for (const auto& dirEntry : std::filesystem::directory_iterator(certDir, std::filesystem::directory_options::skip_permission_denied, certEc)) {
-                if (certEc) {
-                    std::cerr << "Error while scanning cert directory " << certDir << ": " << certEc.message() << std::endl;
-                    break;
-                }
+    {
+        std::lock_guard<std::mutex> lock(g_certCacheMutex);
 
-                std::error_code entryEc;
-                if (!dirEntry.is_regular_file(entryEc)) {
-                    if (entryEc) {
-                        std::cerr << "Skipping cert entry due to stat error " << dirEntry.path() << ": " << entryEc.message() << std::endl;
+        struct ::stat dirStat{};
+        const bool dirStatOk = (::stat(certDir.string().c_str(), &dirStat) == 0);
+        const time_t certDirMtime = dirStatOk ? dirStat.st_mtime : 0;
+
+        if (dirStatOk && g_certCache.valid &&
+            g_certCache.dir == certDir && g_certCache.mtime == certDirMtime) {
+            // Cache hit: reuse the already-loaded bundle.
+            verificationBundlePtr = g_certCache.bundle;
+            certCount = g_certCache.certCount;
+        } else {
+            // Cache miss: scan the directory and build a new bundle.
+            auto newBundle = std::make_shared<ralf::VerificationBundle>();
+            size_t newCertCount = 0;
+
+            try {
+                std::error_code certEc;
+                if (std::filesystem::exists(certDir, certEc) && !certEc &&
+                    std::filesystem::is_directory(certDir, certEc) && !certEc) {
+                    for (const auto& dirEntry : std::filesystem::directory_iterator(certDir, std::filesystem::directory_options::skip_permission_denied, certEc)) {
+                        if (certEc) {
+                            std::cerr << "Error while scanning cert directory " << certDir << ": " << certEc.message() << std::endl;
+                            break;
+                        }
+
+                        std::error_code entryEc;
+                        if (!dirEntry.is_regular_file(entryEc)) {
+                            if (entryEc) {
+                                std::cerr << "Skipping cert entry due to stat error " << dirEntry.path() << ": " << entryEc.message() << std::endl;
+                            }
+                            continue;
+                        }
+
+                        auto certResult = ralf::Certificate::loadFromFile(dirEntry.path().string());
+                        if (certResult.is_error()) {
+                            std::cerr << "Failed to load certificate from file: " << dirEntry.path()
+                                      << " Error: " << certResult.error().what() << std::endl;
+                            continue;
+                        }
+
+                        newBundle->addCertificate(certResult.value());
+                        ++newCertCount;
                     }
-                    continue;
                 }
-
-                auto certResult = ralf::Certificate::loadFromFile(dirEntry.path().string());
-                if (certResult.is_error()) {
-                    std::cerr << "Failed to load certificate from file: " << dirEntry.path()
-                              << " Error: " << certResult.error().what() << std::endl;
-                    continue;
-                }
-
-                verificationBundle.addCertificate(certResult.value());
-                ++certCount;
+            } catch (const std::filesystem::filesystem_error& fsError) {
+                std::cerr << "Filesystem error while loading certificates from " << certDir << ": " << fsError.what() << std::endl;
+                return false;
             }
+
+            if (dirStatOk) {
+                g_certCache.dir = certDir;
+                g_certCache.mtime = certDirMtime;
+                g_certCache.valid = true;
+                g_certCache.bundle = newBundle;
+                g_certCache.certCount = newCertCount;
+            }
+            verificationBundlePtr = std::move(newBundle);
+            certCount = newCertCount;
         }
-    } catch (const std::filesystem::filesystem_error& fsError) {
-        std::cerr << "Filesystem error while loading certificates from " << certDir << ": " << fsError.what() << std::endl;
-        return false;
     }
 
     if (certCount == 0) {
@@ -86,7 +129,7 @@ bool ExtractPackageMetadata(const std::filesystem::path& packagePath,
         return false;
     }
 
-    auto packageResult = ralf::Package::open(packagePath, verificationBundle, ralf::Package::OpenFlags::CheckCertificateExpiry);
+    auto packageResult = ralf::Package::open(packagePath, *verificationBundlePtr, ralf::Package::OpenFlags::CheckCertificateExpiry);
     if (packageResult.is_error()) {
         std::cerr << "Failed to open/verify package with libralf: " << packagePath
                   << " Error: " << packageResult.error().what() << std::endl;
@@ -112,6 +155,14 @@ bool ExtractPackageMetadata(const std::filesystem::path& packagePath,
     }
 
     return !packageAppId.empty();
+}
+
+bool ExtractPackageMetadata(const std::filesystem::path& packagePath,
+                            std::string& packageAppId,
+                            std::string& packageVersion)
+{
+    static const std::filesystem::path kCertDir(DAC_APP_CERT_PATH);
+    return ExtractPackageMetadata(packagePath, kCertDir, packageAppId, packageVersion);
 }
 
 } // namespace ralf_support

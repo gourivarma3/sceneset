@@ -49,11 +49,6 @@
 #define APP_PREINSTALL_DIRECTORY ""
 #endif
 
-// Use common-config provided value as fallback.
-#ifndef DAC_APP_CERT_PATH
-#define DAC_APP_CERT_PATH "/etc/rdk/certs"
-#endif
-
 #define SCENESET_CONFIG_FILE "/opt/sceneset_app.conf"
 #define FACTORY_APPS_COPIED_MARKER "/opt/persistent/.sceneset_factory_apps_copied"
 
@@ -65,7 +60,7 @@ constexpr const char* kPreinstallDirectoryKey = "appPreinstallDirectory";
 constexpr const char* kInitialDownloadSweepEnvVar = "SCENESET_INITIAL_DOWNLOAD_SWEEP";
 constexpr std::chrono::milliseconds kDownloadedPackageSettleDelayMs(1000);
 
-using MetadataExtractor = bool (*)(const std::filesystem::path&, const std::filesystem::path&, std::string&, std::string&);
+using MetadataExtractor = bool (*)(const std::filesystem::path&, std::string&, std::string&);
 MetadataExtractor g_metadataExtractor = &ralf_support::ExtractPackageMetadata;
 
 bool flushFileData(const std::filesystem::path& filePath) {
@@ -997,7 +992,7 @@ bool SceneSetApp::shouldRunInitialDownloadSweep() const {
     return isEnvFlagEnabled(kInitialDownloadSweepEnvVar, false);
 }
 
-void SceneSetApp::setMetadataExtractorForTesting(bool (*extractor)(const std::filesystem::path&, const std::filesystem::path&, std::string&, std::string&)) {
+void SceneSetApp::setMetadataExtractorForTesting(bool (*extractor)(const std::filesystem::path&, std::string&, std::string&)) {
     g_metadataExtractor = (extractor != nullptr) ? extractor : &ralf_support::ExtractPackageMetadata;
 }
 
@@ -1009,7 +1004,7 @@ bool SceneSetApp::processDownloadedPackage(const std::filesystem::path& packageP
     std::string packageAppId;
     std::string packageVersion;
 
-    if (!g_metadataExtractor(packagePath, std::filesystem::path(DAC_APP_CERT_PATH), packageAppId, packageVersion)) {
+    if (!g_metadataExtractor(packagePath, packageAppId, packageVersion)) {
         std::cerr << "Failed to extract metadata from downloaded package: " << packagePath.filename() << std::endl;
         return false;
     }
@@ -1212,7 +1207,7 @@ void SceneSetApp::resolveDynamicDirectories() {
         std::cout << "Updated downloadDir from PackageManagerRDKEMS plugin config: " << m_downloadDirectory << std::endl;
     }
 
-    if (fetchPluginConfigValue(kPreinstallManagerCallsign, kPreinstallDirectoryKey, preinstallDir)) {
+    if (fetchPluginConfigValue(m_preinstallCallsign, kPreinstallDirectoryKey, preinstallDir)) {
         m_preinstallDirectory = preinstallDir;
         std::cout << "Updated appPreinstallDirectory from PreinstallManager plugin config: " << m_preinstallDirectory << std::endl;
     }

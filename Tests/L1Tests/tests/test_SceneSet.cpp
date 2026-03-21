@@ -48,10 +48,6 @@ public:
         app.m_preinstallDirectory = preinstallDirectory;
     }
 
-    static void SetReferenceAppId(SceneSetApp& app, const std::string& referenceAppId) {
-        app.m_referenceAppId = referenceAppId;
-    }
-
     static bool MovePackageToPreinstallDirectory(SceneSetApp& app, const std::filesystem::path& sourcePath) {
         return app.movePackageToPreinstallDirectory(sourcePath);
     }
@@ -64,7 +60,7 @@ public:
         return app.processDownloadedPackage(packagePath);
     }
 
-    static void SetMetadataExtractorForTesting(bool (*extractor)(const std::filesystem::path&, const std::filesystem::path&, std::string&, std::string&)) {
+    static void SetMetadataExtractorForTesting(bool (*extractor)(const std::filesystem::path&, std::string&, std::string&)) {
         SceneSetApp::setMetadataExtractorForTesting(extractor);
     }
 
@@ -74,7 +70,6 @@ public:
 };
 
 bool FakeExtractMetadataSuccess(const std::filesystem::path&,
-                               const std::filesystem::path&,
                                std::string& appId,
                                std::string& version) {
     appId = "TestApp";
@@ -315,7 +310,6 @@ TEST_F(SceneSetTest, ProcessDownloadedPackageStagesReferenceBundleWithInjectedMe
     }
 
     SceneSetAppTestPeer::SetPreinstallDirectory(app, dstDir.string());
-    SceneSetAppTestPeer::SetReferenceAppId(app, "TestApp");
     SceneSetAppTestPeer::SetMetadataExtractorForTesting(&FakeExtractMetadataSuccess);
 
     const bool result = SceneSetAppTestPeer::ProcessDownloadedPackage(app, srcFile);

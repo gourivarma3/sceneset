@@ -30,6 +30,11 @@ bool ExtractPackageMetadata(const std::filesystem::path& packagePath,
                            std::string& packageAppId,
                            std::string& packageVersion);
 
+// Convenience overload: uses the cert directory compiled in via DAC_APP_CERT_PATH.
+bool ExtractPackageMetadata(const std::filesystem::path& packagePath,
+                           std::string& packageAppId,
+                           std::string& packageVersion);
+
 } // namespace ralf_support
 
 #endif // RALF_PACKAGE_SUPPORT_H
