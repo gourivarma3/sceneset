@@ -939,12 +939,20 @@ void SceneSetApp::monitorDownloadDirectory() {
                   << " (" << kInitialDownloadSweepEnvVar << ")" << std::endl;
         if (isInitialSweepEnabled) {
             std::error_code iterEc;
-            for (const auto& entry : fs::directory_iterator(downloadDir, fs::directory_options::skip_permission_denied, iterEc)) {
+            fs::directory_iterator it(downloadDir, fs::directory_options::skip_permission_denied, iterEc);
+            if (iterEc) {
+                std::cerr << "Initial sweep failed while opening download directory: "
+                          << iterEc.message() << std::endl;
+            }
+            fs::directory_iterator end;
+            for (; it != end; it.increment(iterEc)) {
                 if (iterEc) {
                     std::cerr << "Initial sweep failed while scanning download directory: "
                               << iterEc.message() << std::endl;
                     break;
                 }
+
+                const auto& entry = *it;
 
                 std::error_code entryEc;
                 if (!entry.is_regular_file(entryEc) || entryEc) {

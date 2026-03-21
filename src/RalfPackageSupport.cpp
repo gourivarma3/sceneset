@@ -83,11 +83,22 @@ bool ExtractPackageMetadata(const std::filesystem::path& packagePath,
                 std::error_code certEc;
                 if (std::filesystem::exists(certDir, certEc) && !certEc &&
                     std::filesystem::is_directory(certDir, certEc) && !certEc) {
-                    for (const auto& dirEntry : std::filesystem::directory_iterator(certDir, std::filesystem::directory_options::skip_permission_denied, certEc)) {
+                    std::filesystem::directory_iterator it(
+                        certDir,
+                        std::filesystem::directory_options::skip_permission_denied,
+                        certEc);
+                    if (certEc) {
+                        std::cerr << "Error while opening cert directory " << certDir << ": " << certEc.message() << std::endl;
+                    }
+
+                    std::filesystem::directory_iterator end;
+                    for (; it != end; it.increment(certEc)) {
                         if (certEc) {
                             std::cerr << "Error while scanning cert directory " << certDir << ": " << certEc.message() << std::endl;
                             break;
                         }
+
+                        const auto& dirEntry = *it;
 
                         std::error_code entryEc;
                         if (!dirEntry.is_regular_file(entryEc)) {
