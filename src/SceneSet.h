@@ -42,6 +42,8 @@
 using namespace std;
 using namespace WPEFramework;
 
+class SceneSetAppTestPeer;
+
 class SceneSetApp {
 public:
     SceneSetApp();
@@ -68,6 +70,8 @@ public:
     void run();
 
 private:
+    friend class SceneSetAppTestPeer;
+
     std::condition_variable m_act_cv;
     std::atomic<bool> m_isActive;
     std::mutex m_lock;

@@ -29,9 +29,7 @@
 #include <fstream>
 #include <sstream>
 
-#define private public
 #include "SceneSet.h"
-#undef private
 #include "RalfPackageSupport.h"
 
 namespace {
@@ -42,6 +40,17 @@ std::filesystem::path MakeUniqueTempPath(const std::string& prefix) {
     name << prefix << "_" << now << "_" << tid;
     return std::filesystem::temp_directory_path() / name.str();
 }
+
+class SceneSetAppTestPeer {
+public:
+    static void SetPreinstallDirectory(SceneSetApp& app, const std::string& preinstallDirectory) {
+        app.m_preinstallDirectory = preinstallDirectory;
+    }
+
+    static bool MovePackageToPreinstallDirectory(SceneSetApp& app, const std::filesystem::path& sourcePath) {
+        return app.movePackageToPreinstallDirectory(sourcePath);
+    }
+};
 } // namespace
 
 
@@ -214,8 +223,8 @@ TEST_F(SceneSetTest, MovePackageToPreinstallDirectoryOverwritesExistingFile) {
         destination << "old_payload";
     }
 
-    app.m_preinstallDirectory = dstDir.string();
-    const bool result = app.movePackageToPreinstallDirectory(srcFile);
+    SceneSetAppTestPeer::SetPreinstallDirectory(app, dstDir.string());
+    const bool result = SceneSetAppTestPeer::MovePackageToPreinstallDirectory(app, srcFile);
     EXPECT_TRUE(result);
     EXPECT_FALSE(std::filesystem::exists(srcFile));
     EXPECT_TRUE(std::filesystem::exists(dstFile));
@@ -238,8 +247,8 @@ TEST_F(SceneSetTest, MovePackageToPreinstallDirectoryReturnsFalseForMissingSourc
     std::filesystem::create_directories(dstDir, ec);
     ASSERT_FALSE(ec);
 
-    app.m_preinstallDirectory = dstDir.string();
-    const bool result = app.movePackageToPreinstallDirectory(missingSource);
+    SceneSetAppTestPeer::SetPreinstallDirectory(app, dstDir.string());
+    const bool result = SceneSetAppTestPeer::MovePackageToPreinstallDirectory(app, missingSource);
     EXPECT_FALSE(result);
 
     std::filesystem::remove_all(rootDir, ec);

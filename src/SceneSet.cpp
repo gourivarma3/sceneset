@@ -28,7 +28,9 @@
 #include <filesystem>
 #include <fcntl.h>
 #include <limits.h>
+#include <deque>
 #include <poll.h>
+#include <pthread.h>
 #include <sys/inotify.h>
 #include <unistd.h>
 #include <string_view>
@@ -61,7 +63,6 @@ constexpr const char* kPreinstallManagerCallsign = "org.rdk.PreinstallManager";
 constexpr const char* kPreinstallDirectoryKey = "appPreinstallDirectory";
 constexpr const char* kInitialDownloadSweepEnvVar = "SCENESET_INITIAL_DOWNLOAD_SWEEP";
 constexpr std::chrono::milliseconds kDownloadedPackageSettleDelayMs(1000);
-volatile std::sig_atomic_t g_terminateRequested = 0;
 
 bool flushFileData(const std::filesystem::path& filePath) {
     const int fd = ::open(filePath.c_str(), O_RDONLY | O_CLOEXEC);
@@ -227,11 +228,19 @@ bool SceneSetApp::initialize() {
         lock_guard<mutex> lkgd(m_lock);
         m_isActive = true;
     }
-    cout << "Registered to AppManager. Setting term signal" << endl;
-    // Register term signal handler
-    signal(SIGTERM, [](int x) {
-        SceneSetApp::handleTerminationSignal(x);
-    });
+
+    // Block termination signals process-wide; waitForTermSignal() consumes them via sigwait().
+    sigset_t termMask;
+    sigemptyset(&termMask);
+    sigaddset(&termMask, SIGTERM);
+    sigaddset(&termMask, SIGINT);
+    const int maskResult = pthread_sigmask(SIG_BLOCK, &termMask, nullptr);
+    if (maskResult != 0) {
+        std::cerr << "Failed to block termination signals: " << strerror(maskResult) << std::endl;
+        return false;
+    }
+
+    cout << "Registered to AppManager. Waiting for term signal via sigwait" << endl;
     return m_isActive;
 }
 
@@ -535,27 +544,26 @@ void SceneSetApp::checkAndLaunchIfAlreadyInstalled() {
 }
 
 void SceneSetApp::waitForTermSignal() {
-    std::thread termThread([&]() {
-        while (m_isActive.load()) {
-            if (g_terminateRequested != 0) {
-                g_terminateRequested = 0;
-                onTerminate();
-                continue;
-            }
+    sigset_t termMask;
+    sigemptyset(&termMask);
+    sigaddset(&termMask, SIGTERM);
+    sigaddset(&termMask, SIGINT);
 
-            std::unique_lock<std::mutex> ulock(m_lock);
-            m_act_cv.wait_for(ulock, std::chrono::milliseconds(200), [this]() {
-                return !m_isActive.load();
-            });
+    while (m_isActive.load()) {
+        int signalNumber = 0;
+        const int waitResult = sigwait(&termMask, &signalNumber);
+        if (waitResult != 0) {
+            std::cerr << "sigwait failed: " << strerror(waitResult) << std::endl;
+            continue;
         }
-        std::cout << "Exiting application..." << std::endl;
-    });
-    termThread.join();
+        onTerminate();
+    }
+
+    std::cout << "Exiting application..." << std::endl;
 }
 
 void SceneSetApp::handleTerminationSignal(int signal) {
     (void)signal;
-    g_terminateRequested = 1;
 }
 
 void SceneSetApp::onTerminate() {
@@ -788,6 +796,11 @@ void SceneSetApp::monitorDownloadDirectory() {
 
     int inotifyFd = -1;
     int watchFd = -1;
+    std::thread settleWorker;
+    std::mutex settleQueueMutex;
+    std::condition_variable settleQueueCv;
+    std::deque<std::pair<fs::path, std::chrono::steady_clock::time_point>> settleQueue;
+    bool stopSettleWorker = false;
 
     try {
         const fs::path downloadDir(m_downloadDirectory);
@@ -831,12 +844,7 @@ void SceneSetApp::monitorDownloadDirectory() {
 
         std::cout << "Monitoring download directory for reference app packages: " << m_downloadDirectory << std::endl;
 
-        auto processCandidateFile = [this](
-            const fs::path& packagePath,
-            const std::chrono::milliseconds settleDelay = kDownloadedPackageSettleDelayMs) {
-            if (settleDelay.count() > 0) {
-                std::this_thread::sleep_for(settleDelay);
-            }
+        auto processCandidateFile = [this](const fs::path& packagePath) {
             if (!m_stopDownloadMonitorThread && isReadyDownloadedFile(packagePath)) {
                 if (!flushFileData(packagePath)) {
                     std::cerr << "Warning: failed to flush downloaded file before verification: "
@@ -845,6 +853,51 @@ void SceneSetApp::monitorDownloadDirectory() {
                 processDownloadedPackage(packagePath);
             }
         };
+
+        auto enqueueCandidate = [&settleQueueMutex, &settleQueueCv, &settleQueue](
+            const fs::path& packagePath,
+            const std::chrono::milliseconds settleDelay) {
+            const auto readyAt = std::chrono::steady_clock::now() + settleDelay;
+            {
+                std::lock_guard<std::mutex> lock(settleQueueMutex);
+                settleQueue.emplace_back(packagePath, readyAt);
+            }
+            settleQueueCv.notify_one();
+        };
+
+        settleWorker = std::thread([this, &processCandidateFile, &settleQueueMutex, &settleQueueCv, &settleQueue, &stopSettleWorker]() {
+            while (true) {
+                fs::path nextPath;
+                {
+                    std::unique_lock<std::mutex> lock(settleQueueMutex);
+                    settleQueueCv.wait(lock, [&]() {
+                        return stopSettleWorker || !settleQueue.empty();
+                    });
+
+                    if (stopSettleWorker) {
+                        break;
+                    }
+
+                    auto nextIt = settleQueue.begin();
+                    for (auto it = settleQueue.begin(); it != settleQueue.end(); ++it) {
+                        if (it->second < nextIt->second) {
+                            nextIt = it;
+                        }
+                    }
+
+                    const auto now = std::chrono::steady_clock::now();
+                    if (nextIt->second > now) {
+                        settleQueueCv.wait_until(lock, nextIt->second);
+                        continue;
+                    }
+
+                    nextPath = nextIt->first;
+                    settleQueue.erase(nextIt);
+                }
+
+                processCandidateFile(nextPath);
+            }
+        });
 
         // Optionally perform an initial sweep of the download directory
         // to catch any packages that were downloaded before this monitor started.
@@ -866,7 +919,7 @@ void SceneSetApp::monitorDownloadDirectory() {
                     continue;
                 }
 
-                processCandidateFile(entry.path(), std::chrono::milliseconds::zero());
+                enqueueCandidate(entry.path(), std::chrono::milliseconds::zero());
             }
         }
 
@@ -886,12 +939,22 @@ void SceneSetApp::monitorDownloadDirectory() {
             if (ret == 0) continue; // timeout — check stop flag
 
             const ssize_t len = read(inotifyFd, buf, sizeof(buf));
-            if (len <= 0) continue;
+            if (len < 0) {
+                if (errno == EINTR || errno == EAGAIN) {
+                    continue;
+                }
+                std::cerr << "inotify read failed: " << strerror(errno) << std::endl;
+                break;
+            }
+            if (len == 0) {
+                std::cerr << "inotify read returned EOF; stopping monitor thread" << std::endl;
+                break;
+            }
 
             for (const char* ptr = buf; ptr < buf + len; ) {
                 const auto* event = reinterpret_cast<const WPEFramework::Core::inotify_event*>(ptr);
                 if (event->len > 0 && !(event->mask & IN_ISDIR)) {
-                    processCandidateFile(downloadDir / event->name);
+                    enqueueCandidate(downloadDir / event->name, kDownloadedPackageSettleDelayMs);
                 }
                 ptr += EVENT_SIZE + event->len;
             }
@@ -900,6 +963,15 @@ void SceneSetApp::monitorDownloadDirectory() {
         std::cerr << "Unexpected exception in monitorDownloadDirectory: " << e.what() << std::endl;
     } catch (...) {
         std::cerr << "Unexpected non-standard exception in monitorDownloadDirectory" << std::endl;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(settleQueueMutex);
+        stopSettleWorker = true;
+    }
+    settleQueueCv.notify_all();
+    if (settleWorker.joinable()) {
+        settleWorker.join();
     }
 
     if (watchFd >= 0 && inotifyFd >= 0) {
