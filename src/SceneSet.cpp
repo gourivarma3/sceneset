@@ -55,7 +55,6 @@
 
 #define SCENESET_CONFIG_FILE "/opt/sceneset_app.conf"
 #define FACTORY_APPS_COPIED_MARKER "/opt/persistent/.sceneset_factory_apps_copied"
-#define FACTORY_APPS_UPDATE_MARKER "/opt/persistent/.sceneset_factory_apps_update_available"
 
 namespace { // begin file-private constants and helpers
 constexpr const char* kPackageManagerRdkEmsCallsign = "org.rdk.PackageManagerRDKEMS";
@@ -165,6 +164,18 @@ SceneSetApp::~SceneSetApp() {
 }
 
 bool SceneSetApp::initialize() {
+    // Block termination signals for this thread before initialization work;
+    // new threads inherit this mask and waitForTermSignal() consumes via sigwait().
+    sigset_t termMask;
+    sigemptyset(&termMask);
+    sigaddset(&termMask, SIGTERM);
+    sigaddset(&termMask, SIGINT);
+    const int maskResult = pthread_sigmask(SIG_BLOCK, &termMask, nullptr);
+    if (maskResult != 0) {
+        std::cerr << "Failed to block termination signals: " << strerror(maskResult) << std::endl;
+        return false;
+    }
+
     const std::string envThunderAccess = getThunderAccessPath();
 
     std::cout << "Thunder Access Path: " << envThunderAccess << std::endl;
@@ -242,29 +253,6 @@ bool SceneSetApp::initialize() {
     {
         lock_guard<mutex> lkgd(m_lock);
         m_isActive = true;
-    }
-
-    // Block termination signals for this thread; new threads inherit this mask and waitForTermSignal() consumes via sigwait().
-    sigset_t termMask;
-    sigemptyset(&termMask);
-    sigaddset(&termMask, SIGTERM);
-    sigaddset(&termMask, SIGINT);
-    const int maskResult = pthread_sigmask(SIG_BLOCK, &termMask, nullptr);
-    if (maskResult != 0) {
-        std::cerr << "Failed to block termination signals: " << strerror(maskResult) << std::endl;
-        {
-            lock_guard<mutex> lkgd(m_lock);
-            m_isActive = false;
-        }
-        if (m_appManager != nullptr) {
-            m_appManager->Release();
-            m_appManager = nullptr;
-        }
-        if (m_preinstallManager != nullptr) {
-            m_preinstallManager->Release();
-            m_preinstallManager = nullptr;
-        }
-        return false;
     }
 
     cout << "Registered to AppManager. Waiting for term signal via sigwait" << endl;
@@ -628,14 +616,7 @@ void SceneSetApp::run() {
     // Determine if this is a Factory Setting Reset (FSR) / first boot scenario
     bool isFactoryReset = !isFactoryAppsCopied();
 
-    // Check if an update is available from a prior OTA download
-    std::error_code updateMarkerEc;
-    bool isUpdateAvailable = std::filesystem::exists(FACTORY_APPS_UPDATE_MARKER, updateMarkerEc);
-    if (updateMarkerEc) {
-        std::cerr << "Warning: Failed to check update marker: " << updateMarkerEc.message() << std::endl;
-    }
-
-    // Copy factory apps to preinstall folder on first boot / factory reset ONLY
+    // Copy factory apps to preinstall folder on first boot only
     if (isFactoryReset) {
         std::cout << "First boot/Factory reset detected. Copying factory apps to preinstall folder." << std::endl;
         if (!copyFactoryAppsToPreinstall()) {
@@ -646,25 +627,13 @@ void SceneSetApp::run() {
     }
 
     // Start preinstall - this is SYNCHRONOUS and BLOCKS until all bundles are installed
-    // Use forceInstall=true if FACTORY RESET (to force install factory apps) OR UPDATE AVAILABLE (to force install OTA)
-    // Use forceInstall=false for normal boots
-    bool forceInstall = isFactoryReset || isUpdateAvailable;
-    std::cout << "Starting preinstall process with forceInstall=" << (forceInstall ? "true" : "false") << std::endl;
-    if (startPreinstall(forceInstall)) {
+    // Use forceInstall=true for FSR cases (force reinstall all packages)
+    // Use forceInstall=false for normal boots (only install if newer version)
+    std::cout << "Starting preinstall process" << std::endl;
+    if (startPreinstall(isFactoryReset)) {
         std::cout << "Preinstall process completed. Proceeding with cleaning up preinstall folder" << std::endl;
         // Clean up preinstall folder after preinstall succeeds
         cleanupPreinstallFolder();
-
-        // Clear the update marker if it was set, since update has been processed
-        std::error_code ec;
-        if (std::filesystem::exists(FACTORY_APPS_UPDATE_MARKER, ec)) {
-            std::filesystem::remove(FACTORY_APPS_UPDATE_MARKER, ec);
-            if (!ec) {
-                std::cout << "Cleared update marker after successful preinstall" << std::endl;
-            } else {
-                std::cerr << "Warning: Failed to clear update marker: " << ec.message() << std::endl;
-            }
-        }
     }
 
     // Check if reference app is installed and launch it
@@ -1119,16 +1088,6 @@ bool SceneSetApp::movePackageToPreinstallDirectory(const std::filesystem::path& 
                       << " error=" << strerror(errno) << std::endl;
         }
         std::cout << "Moved downloaded reference package to preinstall: " << destination << std::endl;
-
-        // Mark that an update is available for install on next boot
-        std::ofstream updateMarkerFile(FACTORY_APPS_UPDATE_MARKER);
-        if (updateMarkerFile.is_open()) {
-            updateMarkerFile << "Update available for installation" << std::endl;
-            updateMarkerFile.close();
-            std::cout << "Marked update available for next boot: " << FACTORY_APPS_UPDATE_MARKER << std::endl;
-        } else {
-            std::cerr << "Warning: Failed to create update marker file at: " << FACTORY_APPS_UPDATE_MARKER << std::endl;
-        }
         return true;
     } catch (const fs::filesystem_error& e) {
         if (e.code() == std::errc::cross_device_link) {
@@ -1149,16 +1108,6 @@ bool SceneSetApp::movePackageToPreinstallDirectory(const std::filesystem::path& 
                 }
                 std::cout << "Copied downloaded package to preinstall across filesystems: "
                           << destination << "; removed source file: " << sourceFile << std::endl;
-
-                // Mark that an update is available for install on next boot
-                std::ofstream updateMarkerFile(FACTORY_APPS_UPDATE_MARKER);
-                if (updateMarkerFile.is_open()) {
-                    updateMarkerFile << "Update available for installation" << std::endl;
-                    updateMarkerFile.close();
-                    std::cout << "Marked update available for next boot: " << FACTORY_APPS_UPDATE_MARKER << std::endl;
-                } else {
-                    std::cerr << "Warning: Failed to create update marker file at: " << FACTORY_APPS_UPDATE_MARKER << std::endl;
-                }
                 return true;
             } catch (const fs::filesystem_error& e2) {
                 std::cerr << "Failed copying package " << sourceFile << " to " << destination

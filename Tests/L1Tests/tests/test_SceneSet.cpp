@@ -84,6 +84,16 @@ bool FakeExtractMetadataSuccess(const std::filesystem::path&,
     return true;
 }
 
+class MetadataExtractorResetGuard {
+public:
+    MetadataExtractorResetGuard() = default;
+    ~MetadataExtractorResetGuard() {
+        SceneSetAppTestPeer::ResetMetadataExtractorForTesting();
+    }
+    MetadataExtractorResetGuard(const MetadataExtractorResetGuard&) = delete;
+    MetadataExtractorResetGuard& operator=(const MetadataExtractorResetGuard&) = delete;
+};
+
 
 class SceneSetTest : public ::testing::Test {
 protected:
@@ -320,12 +330,12 @@ TEST_F(SceneSetTest, ProcessDownloadedPackageStagesReferenceBundleWithInjectedMe
     SceneSetAppTestPeer::SetPreinstallDirectory(app, dstDir.string());
     g_fakeExtractorRefAppId = SceneSetAppTestPeer::GetReferenceAppId(app);
     SceneSetAppTestPeer::SetMetadataExtractorForTesting(&FakeExtractMetadataSuccess);
+    MetadataExtractorResetGuard metadataExtractorResetGuard;
 
     const bool result = SceneSetAppTestPeer::ProcessDownloadedPackage(app, srcFile);
     EXPECT_TRUE(result);
     EXPECT_FALSE(std::filesystem::exists(srcFile));
     EXPECT_TRUE(std::filesystem::exists(dstFile));
 
-    SceneSetAppTestPeer::ResetMetadataExtractorForTesting();
     std::filesystem::remove_all(rootDir, ec);
 }
