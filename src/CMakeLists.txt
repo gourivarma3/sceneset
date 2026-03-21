@@ -19,6 +19,17 @@ set (TARGET "sceneset")
 
 add_executable(${TARGET} SceneSet.cpp RalfPackageSupport.cpp main.cpp)
 
+set_target_properties(${TARGET} PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+    CXX_EXTENSIONS OFF
+)
+
+# GCC < 9 requires explicit -lstdc++fs when using <filesystem> in C++17 mode.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 9)
+    target_link_libraries(${TARGET} PRIVATE stdc++fs)
+endif()
+
 find_package(PkgConfig REQUIRED)
 find_package(libralf CONFIG REQUIRED)
 

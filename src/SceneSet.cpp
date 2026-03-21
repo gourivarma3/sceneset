@@ -245,7 +245,7 @@ bool SceneSetApp::initialize() {
         m_preinstallDirectory = APP_PREINSTALL_DIRECTORY;
     }
     if (m_preinstallDirectory.empty()) {
-        std::cout << "No valid appPreinstallDirectory configured, cannot proceed." << std::endl;
+        std::cerr << "No valid appPreinstallDirectory configured, cannot proceed." << std::endl;
         if (m_preinstallManager != nullptr) {
             m_preinstallManager->Release();
             m_preinstallManager = nullptr;
