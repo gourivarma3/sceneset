@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <condition_variable>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -151,7 +152,7 @@ static std::string getDefaultAppName() {
 }
 
 SceneSetApp::SceneSetApp()
-    :  m_act_cv(), m_isActive(false), m_lock(), m_appManager(nullptr), m_preinstallManager(nullptr), m_appManagerEventHandler(nullptr), m_preinstallManagerEventHandler(nullptr), m_appmgrCallsign("org.rdk.AppManager"), m_preinstallCallsign("org.rdk.PreinstallManager"), m_referenceAppId(getDefaultAppName()), m_comrpcPath("/tmp/communicator"), m_downloadDirectory(""), m_preinstallDirectory(APP_PREINSTALL_DIRECTORY), m_launchThread(nullptr), m_stopLaunchThread(false), m_appLaunched(false), m_pendingRestart(false), m_launchThreadMutex(), m_downloadMonitorThread(nullptr), m_stopDownloadMonitorThread(false), m_downloadMonitorMutex() {
+    : m_isActive(false), m_lock(), m_appManager(nullptr), m_preinstallManager(nullptr), m_appManagerEventHandler(nullptr), m_preinstallManagerEventHandler(nullptr), m_appmgrCallsign("org.rdk.AppManager"), m_preinstallCallsign("org.rdk.PreinstallManager"), m_referenceAppId(getDefaultAppName()), m_comrpcPath("/tmp/communicator"), m_downloadDirectory(""), m_preinstallDirectory(APP_PREINSTALL_DIRECTORY), m_launchThread(nullptr), m_stopLaunchThread(false), m_appLaunched(false), m_pendingRestart(false), m_launchThreadMutex(), m_downloadMonitorThread(nullptr), m_stopDownloadMonitorThread(false), m_downloadMonitorMutex() {
 }
 
 SceneSetApp::~SceneSetApp() {

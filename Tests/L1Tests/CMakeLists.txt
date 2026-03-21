@@ -19,7 +19,7 @@ cmake_minimum_required(VERSION 3.8)
 
 project(SceneSetL1Tests)
 
-set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Find required packages
@@ -54,7 +54,7 @@ target_link_libraries(${TEST_EXECUTABLE}
     dl
 )
 
-    # GCC < 9 requires explicit -lstdc++fs when using <filesystem> in C++14 mode.
+    # GCC < 9 requires explicit -lstdc++fs when using <filesystem> in C++17 mode.
     if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 9)
         target_link_libraries(${TEST_EXECUTABLE} PRIVATE stdc++fs)
     endif()

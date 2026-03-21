@@ -25,7 +25,6 @@
 #include <thread>
 #include <atomic>
 #include <csignal>
-#include <condition_variable>
 #include <filesystem>
 #include <mutex>
 #include <systemd/sd-daemon.h>
@@ -72,7 +71,6 @@ public:
 private:
     friend class SceneSetAppTestPeer;
 
-    std::condition_variable m_act_cv;
     std::atomic<bool> m_isActive;
     std::mutex m_lock;
     Exchange::IAppManager *m_appManager;
