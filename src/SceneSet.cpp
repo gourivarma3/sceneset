@@ -60,7 +60,6 @@
 namespace { // begin file-private constants and helpers
 constexpr const char* kPackageManagerRdkEmsCallsign = "org.rdk.PackageManagerRDKEMS";
 constexpr const char* kPackageManagerDownloadDirKey = "downloadDir";
-constexpr const char* kPreinstallManagerCallsign = "org.rdk.PreinstallManager";
 constexpr const char* kPreinstallDirectoryKey = "appPreinstallDirectory";
 constexpr const char* kInitialDownloadSweepEnvVar = "SCENESET_INITIAL_DOWNLOAD_SWEEP";
 constexpr std::chrono::milliseconds kDownloadedPackageSettleDelayMs(1000);
@@ -77,7 +76,6 @@ bool flushFileData(const std::filesystem::path& filePath) {
     const int originalErrno = errno;
     int syncResult = ::fdatasync(fd);
     if (syncResult != 0) {
-        const int fdatasyncErrno = errno;
         syncResult = ::fsync(fd);
         if (syncResult != 0) {
             const int fsyncErrno = errno;
@@ -227,6 +225,14 @@ bool SceneSetApp::initialize() {
     }
     if (m_preinstallDirectory.empty()) {
         std::cout << "No valid appPreinstallDirectory configured, cannot proceed." << std::endl;
+        if (m_preinstallManager != nullptr) {
+            m_preinstallManager->Release();
+            m_preinstallManager = nullptr;
+        }
+        if (m_appManager != nullptr) {
+            m_appManager->Release();
+            m_appManager = nullptr;
+        }
         return false;
     }
     if (m_downloadDirectory.empty()) {
@@ -238,7 +244,7 @@ bool SceneSetApp::initialize() {
         m_isActive = true;
     }
 
-    // Block termination signals process-wide; waitForTermSignal() consumes them via sigwait().
+    // Block termination signals for this thread; new threads inherit this mask and waitForTermSignal() consumes via sigwait().
     sigset_t termMask;
     sigemptyset(&termMask);
     sigaddset(&termMask, SIGTERM);
@@ -623,7 +629,11 @@ void SceneSetApp::run() {
     bool isFactoryReset = !isFactoryAppsCopied();
 
     // Check if an update is available from a prior OTA download
-    bool isUpdateAvailable = std::filesystem::exists(FACTORY_APPS_UPDATE_MARKER);
+    std::error_code updateMarkerEc;
+    bool isUpdateAvailable = std::filesystem::exists(FACTORY_APPS_UPDATE_MARKER, updateMarkerEc);
+    if (updateMarkerEc) {
+        std::cerr << "Warning: Failed to check update marker: " << updateMarkerEc.message() << std::endl;
+    }
 
     // Copy factory apps to preinstall folder on first boot / factory reset ONLY
     if (isFactoryReset) {
