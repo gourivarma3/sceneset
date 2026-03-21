@@ -21,6 +21,7 @@
 #include "RalfPackageSupport.h"
 #include <cerrno>
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstring>
 #include <fstream>
@@ -100,7 +101,10 @@ bool isEnvFlagEnabled(const char* envVarName, const bool defaultValue) {
     }
 
     std::string rawValue(value);
-    std::transform(rawValue.begin(), rawValue.end(), rawValue.begin(), ::tolower);
+    std::transform(rawValue.begin(), rawValue.end(), rawValue.begin(),
+        [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
 
     if (rawValue == "1" || rawValue == "true" || rawValue == "yes" || rawValue == "on") {
         return true;
@@ -827,8 +831,12 @@ void SceneSetApp::monitorDownloadDirectory() {
 
         std::cout << "Monitoring download directory for reference app packages: " << m_downloadDirectory << std::endl;
 
-        auto processCandidateFile = [this](const fs::path& packagePath) {
-            std::this_thread::sleep_for(kDownloadedPackageSettleDelayMs);
+        auto processCandidateFile = [this](
+            const fs::path& packagePath,
+            const std::chrono::milliseconds settleDelay = kDownloadedPackageSettleDelayMs) {
+            if (settleDelay.count() > 0) {
+                std::this_thread::sleep_for(settleDelay);
+            }
             if (!m_stopDownloadMonitorThread && isReadyDownloadedFile(packagePath)) {
                 if (!flushFileData(packagePath)) {
                     std::cerr << "Warning: failed to flush downloaded file before verification: "
@@ -858,7 +866,7 @@ void SceneSetApp::monitorDownloadDirectory() {
                     continue;
                 }
 
-                processCandidateFile(entry.path());
+                processCandidateFile(entry.path(), std::chrono::milliseconds::zero());
             }
         }
 
