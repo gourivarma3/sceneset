@@ -69,14 +69,24 @@ bool flushFileData(const std::filesystem::path& filePath) {
         return false;
     }
 
+    const int originalErrno = errno;
     int syncResult = ::fdatasync(fd);
     if (syncResult != 0) {
+        const int fdatasyncErrno = errno;
         syncResult = ::fsync(fd);
+        if (syncResult != 0) {
+            const int fsyncErrno = errno;
+            ::close(fd);
+            errno = fsyncErrno;
+            return false;
+        }
+        ::close(fd);
+        errno = originalErrno;
+        return true;
     }
-    const int savedErrno = errno;
     ::close(fd);
-    errno = savedErrno;
-    return (syncResult == 0);
+    errno = originalErrno;
+    return true;
 }
 
 bool isReadyDownloadedFile(const std::filesystem::path& filePath) {
@@ -577,7 +587,6 @@ void SceneSetApp::onTerminate() {
         std::lock_guard<std::mutex> lock(m_lock);
         m_isActive = false;
     }
-    m_act_cv.notify_one();
 #if !DISABLE_REFERENCE_APP_UPDATE
     stopDownloadMonitorThread();
 #endif

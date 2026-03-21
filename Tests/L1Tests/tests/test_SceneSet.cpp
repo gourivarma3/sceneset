@@ -69,10 +69,14 @@ public:
     }
 };
 
+// Thread-local storage for the reference app id to be returned by the fake extractor
+thread_local std::string g_fakeExtractorRefAppId;
+
 bool FakeExtractMetadataSuccess(const std::filesystem::path&,
+                               const std::filesystem::path&,
                                std::string& appId,
                                std::string& version) {
-    appId = "TestApp";
+    appId = g_fakeExtractorRefAppId;
     version = "1.0.0";
     return true;
 }
@@ -93,6 +97,7 @@ protected:
         // Clean up environment variables
         unsetenv("THUNDER_ACCESS");
         unsetenv("SCENESET_DEFAULT_APPNAME");
+        unsetenv("SCENESET_INITIAL_DOWNLOAD_SWEEP");
     }
 };
 
@@ -310,6 +315,7 @@ TEST_F(SceneSetTest, ProcessDownloadedPackageStagesReferenceBundleWithInjectedMe
     }
 
     SceneSetAppTestPeer::SetPreinstallDirectory(app, dstDir.string());
+    g_fakeExtractorRefAppId = app.m_referenceAppId;
     SceneSetAppTestPeer::SetMetadataExtractorForTesting(&FakeExtractMetadataSuccess);
 
     const bool result = SceneSetAppTestPeer::ProcessDownloadedPackage(app, srcFile);
