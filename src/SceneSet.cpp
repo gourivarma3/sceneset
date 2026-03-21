@@ -1121,7 +1121,7 @@ bool SceneSetApp::movePackageToPreinstallDirectory(const std::filesystem::path& 
         std::cout << "Moved downloaded reference package to preinstall: " << destination << std::endl;
         return true;
     } catch (const fs::filesystem_error& e) {
-        if (e.code() == std::errc::cross_device_link) {
+        if (e.code() == std::errc::cross_device_link || e.code() == std::errc::file_exists) {
             try {
                 std::error_code cleanupError;
                 fs::copy_file(sourceFile, destination, fs::copy_options::overwrite_existing);
@@ -1136,12 +1136,12 @@ bool SceneSetApp::movePackageToPreinstallDirectory(const std::filesystem::path& 
                     std::cerr << "Warning: failed to flush staged package file: " << destination
                               << " error=" << strerror(errno) << std::endl;
                 }
-                std::cout << "Copied downloaded package to preinstall across filesystems: "
+                std::cout << "Copied downloaded package to preinstall (fallback path): "
                           << destination << "; removed source file: " << sourceFile << std::endl;
                 return true;
             } catch (const fs::filesystem_error& e2) {
                 std::cerr << "Failed copying package " << sourceFile << " to " << destination
-                          << " after cross-filesystem rename failure: " << e2.what() << std::endl;
+                          << " after rename fallback: " << e2.what() << std::endl;
                 return false;
             }
         }
