@@ -872,6 +872,11 @@ void SceneSetApp::monitorDownloadDirectory() {
         std::cout << "Monitoring download directory for reference app packages: " << m_downloadDirectory << std::endl;
 
         auto processCandidateFile = [this](const fs::path& packagePath) {
+            // Skip hidden files (those starting with a dot).
+            const std::string fileName = packagePath.filename().string();
+            if (!fileName.empty() && fileName[0] == '.') {
+                return;
+            }
             if (!m_stopDownloadMonitorThread && isReadyDownloadedFile(packagePath)) {
                 if (!flushFileData(packagePath)) {
                     std::cerr << "Warning: failed to flush downloaded file before verification: "
@@ -946,6 +951,12 @@ void SceneSetApp::monitorDownloadDirectory() {
                     continue;
                 }
 
+                // Skip hidden files (those starting with a dot).
+                const std::string fileName = entry.path().filename().string();
+                if (!fileName.empty() && fileName[0] == '.') {
+                    continue;
+                }
+
                 enqueueCandidate(entry.path(), std::chrono::milliseconds::zero());
             }
         }
@@ -981,7 +992,10 @@ void SceneSetApp::monitorDownloadDirectory() {
             for (const char* ptr = buf; ptr < buf + len; ) {
                 const auto* event = reinterpret_cast<const WPEFramework::Core::inotify_event*>(ptr);
                 if (event->len > 0 && !(event->mask & IN_ISDIR)) {
-                    enqueueCandidate(downloadDir / event->name, kDownloadedPackageSettleDelayMs);
+                    // Skip hidden files (those starting with a dot).
+                    if (event->name[0] != '.') {
+                        enqueueCandidate(downloadDir / event->name, kDownloadedPackageSettleDelayMs);
+                    }
                 }
                 ptr += EVENT_SIZE + event->len;
             }
