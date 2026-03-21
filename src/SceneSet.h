@@ -99,8 +99,11 @@ private:
     void startDownloadMonitorThread();
     void stopDownloadMonitorThread();
     void monitorDownloadDirectory();
+    bool shouldRunInitialDownloadSweep() const;
     bool processDownloadedPackage(const std::filesystem::path& packagePath);
     bool movePackageToPreinstallDirectory(const std::filesystem::path& sourceFile);
+    static void setMetadataExtractorForTesting(bool (*extractor)(const std::filesystem::path&, const std::filesystem::path&, std::string&, std::string&));
+    static void resetMetadataExtractorForTesting();
     std::string getInstalledReferenceAppVersion() const;
     std::string getThunderAccessPath() const;
     bool fetchPluginConfigValue(const std::string& callsign, const std::string& configKey, std::string& value) const;

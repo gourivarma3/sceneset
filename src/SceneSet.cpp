@@ -64,6 +64,9 @@ constexpr const char* kPreinstallDirectoryKey = "appPreinstallDirectory";
 constexpr const char* kInitialDownloadSweepEnvVar = "SCENESET_INITIAL_DOWNLOAD_SWEEP";
 constexpr std::chrono::milliseconds kDownloadedPackageSettleDelayMs(1000);
 
+using MetadataExtractor = bool (*)(const std::filesystem::path&, const std::filesystem::path&, std::string&, std::string&);
+MetadataExtractor g_metadataExtractor = &ralf_support::ExtractPackageMetadata;
+
 bool flushFileData(const std::filesystem::path& filePath) {
     const int fd = ::open(filePath.c_str(), O_RDONLY | O_CLOEXEC);
     if (fd < 0) {
@@ -237,6 +240,18 @@ bool SceneSetApp::initialize() {
     const int maskResult = pthread_sigmask(SIG_BLOCK, &termMask, nullptr);
     if (maskResult != 0) {
         std::cerr << "Failed to block termination signals: " << strerror(maskResult) << std::endl;
+        {
+            lock_guard<mutex> lkgd(m_lock);
+            m_isActive = false;
+        }
+        if (m_appManager != nullptr) {
+            m_appManager->Release();
+            m_appManager = nullptr;
+        }
+        if (m_preinstallManager != nullptr) {
+            m_preinstallManager->Release();
+            m_preinstallManager = nullptr;
+        }
         return false;
     }
 
@@ -901,7 +916,7 @@ void SceneSetApp::monitorDownloadDirectory() {
 
         // Optionally perform an initial sweep of the download directory
         // to catch any packages that were downloaded before this monitor started.
-        const bool isInitialSweepEnabled = isEnvFlagEnabled(kInitialDownloadSweepEnvVar, false);
+        const bool isInitialSweepEnabled = shouldRunInitialDownloadSweep();
         std::cout << "Initial download directory sweep is "
                   << (isInitialSweepEnabled ? "enabled" : "disabled")
                   << " (" << kInitialDownloadSweepEnvVar << ")" << std::endl;
@@ -982,11 +997,23 @@ void SceneSetApp::monitorDownloadDirectory() {
     }
 }
 
+bool SceneSetApp::shouldRunInitialDownloadSweep() const {
+    return isEnvFlagEnabled(kInitialDownloadSweepEnvVar, false);
+}
+
+void SceneSetApp::setMetadataExtractorForTesting(bool (*extractor)(const std::filesystem::path&, const std::filesystem::path&, std::string&, std::string&)) {
+    g_metadataExtractor = (extractor != nullptr) ? extractor : &ralf_support::ExtractPackageMetadata;
+}
+
+void SceneSetApp::resetMetadataExtractorForTesting() {
+    g_metadataExtractor = &ralf_support::ExtractPackageMetadata;
+}
+
 bool SceneSetApp::processDownloadedPackage(const std::filesystem::path& packagePath) {
     std::string packageAppId;
     std::string packageVersion;
 
-    if (!ralf_support::ExtractPackageMetadata(packagePath, std::filesystem::path(DAC_APP_CERT_PATH), packageAppId, packageVersion)) {
+    if (!g_metadataExtractor(packagePath, std::filesystem::path(DAC_APP_CERT_PATH), packageAppId, packageVersion)) {
         std::cerr << "Failed to extract metadata from downloaded package: " << packagePath.filename() << std::endl;
         return false;
     }

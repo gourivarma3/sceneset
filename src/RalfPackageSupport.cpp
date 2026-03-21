@@ -28,6 +28,8 @@
 #elif __has_include(<Package.h>)
 #include <Package.h>
 #include <Certificate.h>
+#else
+#error "libralf Package.h header not found. Ensure libralf is installed and its include path is configured."
 #endif
 
 namespace ralf = LIBRALF_NS;

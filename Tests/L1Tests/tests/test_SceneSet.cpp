@@ -51,7 +51,32 @@ public:
     static bool MovePackageToPreinstallDirectory(SceneSetApp& app, const std::filesystem::path& sourcePath) {
         return app.movePackageToPreinstallDirectory(sourcePath);
     }
+
+    static bool ShouldRunInitialDownloadSweep(const SceneSetApp& app) {
+        return app.shouldRunInitialDownloadSweep();
+    }
+
+    static bool ProcessDownloadedPackage(SceneSetApp& app, const std::filesystem::path& packagePath) {
+        return app.processDownloadedPackage(packagePath);
+    }
+
+    static void SetMetadataExtractorForTesting(bool (*extractor)(const std::filesystem::path&, const std::filesystem::path&, std::string&, std::string&)) {
+        SceneSetApp::setMetadataExtractorForTesting(extractor);
+    }
+
+    static void ResetMetadataExtractorForTesting() {
+        SceneSetApp::resetMetadataExtractorForTesting();
+    }
 };
+
+bool FakeExtractMetadataSuccess(const std::filesystem::path&,
+                               const std::filesystem::path&,
+                               std::string& appId,
+                               std::string& version) {
+    appId = "TestApp";
+    version = "1.0.0";
+    return true;
+}
 
 
 class SceneSetTest : public ::testing::Test {
@@ -167,7 +192,7 @@ TEST_F(SceneSetTest, ExtractPackageMetadataReturnsFalseForMissingCertDirectory) 
     std::string version;
 
     const std::filesystem::path missingCertDir = MakeUniqueTempPath("sceneset_missing_cert_dir");
-    const std::filesystem::path fakePackage = missingCertDir / "fake.wgt";
+    const std::filesystem::path fakePackage = missingCertDir / "fake.bolt";
 
     std::error_code ec;
     std::filesystem::remove_all(missingCertDir, ec);
@@ -185,7 +210,7 @@ TEST_F(SceneSetTest, ExtractPackageMetadataReturnsFalseWhenCertPathIsNotDirector
     std::string version;
 
     const std::filesystem::path certPathFile = MakeUniqueTempPath("sceneset_cert_path_file");
-    const std::filesystem::path fakePackage = certPathFile.parent_path() / "fake.wgt";
+    const std::filesystem::path fakePackage = certPathFile.parent_path() / "fake.bolt";
 
     {
         std::ofstream file(certPathFile);
@@ -206,8 +231,8 @@ TEST_F(SceneSetTest, MovePackageToPreinstallDirectoryOverwritesExistingFile) {
     const auto rootDir = MakeUniqueTempPath("sceneset_stage_overwrite");
     const auto srcDir = rootDir / "download";
     const auto dstDir = rootDir / "preinstall";
-    const auto srcFile = srcDir / "bundle.pkg";
-    const auto dstFile = dstDir / "bundle.pkg";
+    const auto srcFile = srcDir / "bundle.bolt";
+    const auto dstFile = dstDir / "bundle.bolt";
 
     std::error_code ec;
     std::filesystem::create_directories(srcDir, ec);
@@ -251,5 +276,48 @@ TEST_F(SceneSetTest, MovePackageToPreinstallDirectoryReturnsFalseForMissingSourc
     const bool result = SceneSetAppTestPeer::MovePackageToPreinstallDirectory(app, missingSource);
     EXPECT_FALSE(result);
 
+    std::filesystem::remove_all(rootDir, ec);
+}
+
+TEST_F(SceneSetTest, InitialDownloadSweepDecisionHonorsEnvironmentFlag) {
+    SceneSetApp app;
+
+    unsetenv("SCENESET_INITIAL_DOWNLOAD_SWEEP");
+    EXPECT_FALSE(SceneSetAppTestPeer::ShouldRunInitialDownloadSweep(app));
+
+    setenv("SCENESET_INITIAL_DOWNLOAD_SWEEP", "1", 1);
+    EXPECT_TRUE(SceneSetAppTestPeer::ShouldRunInitialDownloadSweep(app));
+
+    setenv("SCENESET_INITIAL_DOWNLOAD_SWEEP", "off", 1);
+    EXPECT_FALSE(SceneSetAppTestPeer::ShouldRunInitialDownloadSweep(app));
+}
+
+TEST_F(SceneSetTest, ProcessDownloadedPackageStagesReferenceBundleWithInjectedMetadata) {
+    SceneSetApp app;
+    const auto rootDir = MakeUniqueTempPath("sceneset_process_downloaded_package");
+    const auto srcDir = rootDir / "download";
+    const auto dstDir = rootDir / "preinstall";
+    const auto srcFile = srcDir / "bundle.bolt";
+    const auto dstFile = dstDir / "bundle.bolt";
+
+    std::error_code ec;
+    std::filesystem::create_directories(srcDir, ec);
+    std::filesystem::create_directories(dstDir, ec);
+    ASSERT_FALSE(ec);
+
+    {
+        std::ofstream source(srcFile);
+        source << "payload";
+    }
+
+    SceneSetAppTestPeer::SetPreinstallDirectory(app, dstDir.string());
+    SceneSetAppTestPeer::SetMetadataExtractorForTesting(&FakeExtractMetadataSuccess);
+
+    const bool result = SceneSetAppTestPeer::ProcessDownloadedPackage(app, srcFile);
+    EXPECT_TRUE(result);
+    EXPECT_FALSE(std::filesystem::exists(srcFile));
+    EXPECT_TRUE(std::filesystem::exists(dstFile));
+
+    SceneSetAppTestPeer::ResetMetadataExtractorForTesting();
     std::filesystem::remove_all(rootDir, ec);
 }
