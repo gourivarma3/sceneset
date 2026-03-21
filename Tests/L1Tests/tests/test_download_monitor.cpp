@@ -18,6 +18,8 @@
 **/
 
 #include <gtest/gtest.h>
+#include <gmock/gmock.h>
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
