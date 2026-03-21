@@ -993,11 +993,11 @@ bool SceneSetApp::shouldRunInitialDownloadSweep() const {
 }
 
 void SceneSetApp::setMetadataExtractorForTesting(bool (*extractor)(const std::filesystem::path&, std::string&, std::string&)) {
-    g_metadataExtractor = (extractor != nullptr) ? extractor : &ralf_support::ExtractPackageMetadata;
+    g_metadataExtractor = (extractor != nullptr) ? extractor : static_cast<MetadataExtractor>(&ralf_support::ExtractPackageMetadata);
 }
 
 void SceneSetApp::resetMetadataExtractorForTesting() {
-    g_metadataExtractor = &ralf_support::ExtractPackageMetadata;
+    g_metadataExtractor = static_cast<MetadataExtractor>(&ralf_support::ExtractPackageMetadata);
 }
 
 bool SceneSetApp::processDownloadedPackage(const std::filesystem::path& packagePath) {
