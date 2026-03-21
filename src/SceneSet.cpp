@@ -166,15 +166,21 @@ SceneSetApp::~SceneSetApp() {
 bool SceneSetApp::initialize() {
     // Block termination signals for this thread before initialization work;
     // new threads inherit this mask and waitForTermSignal() consumes via sigwait().
-    sigset_t termMask;
+    // Save the old mask so we can restore it on early failure returns.
+    sigset_t termMask, oldMask;
     sigemptyset(&termMask);
     sigaddset(&termMask, SIGTERM);
     sigaddset(&termMask, SIGINT);
-    const int maskResult = pthread_sigmask(SIG_BLOCK, &termMask, nullptr);
+    const int maskResult = pthread_sigmask(SIG_BLOCK, &termMask, &oldMask);
     if (maskResult != 0) {
         std::cerr << "Failed to block termination signals: " << strerror(maskResult) << std::endl;
         return false;
     }
+
+    // Restore original mask on early exit (RAII-like cleanup for early returns).
+    auto restoreMaskOnExit = [&oldMask]() {
+        pthread_sigmask(SIG_SETMASK, &oldMask, nullptr);
+    };
 
     const std::string envThunderAccess = getThunderAccessPath();
 
@@ -187,6 +193,7 @@ bool SceneSetApp::initialize() {
 
     if (!appManagerClient.IsValid()) {
         std::cerr << "Failed to create COMRPC client for AppManager." << std::endl;
+        restoreMaskOnExit();
         return false;
     }
 
@@ -196,6 +203,7 @@ bool SceneSetApp::initialize() {
     m_appManager = appManagerClient->Open<Exchange::IAppManager>(m_appmgrCallsign.c_str());
     if (m_appManager == nullptr) {
         std::cerr << "Failed to open IAppManager interface." << std::endl;
+        restoreMaskOnExit();
         return false;
     }
 
@@ -211,6 +219,7 @@ bool SceneSetApp::initialize() {
             m_appManager->Release();
             m_appManager = nullptr;
         }
+        restoreMaskOnExit();
         return false;
     }
 
@@ -224,6 +233,7 @@ bool SceneSetApp::initialize() {
             m_appManager->Release();
             m_appManager = nullptr;
         }
+        restoreMaskOnExit();
         return false;
     }
 
@@ -244,6 +254,7 @@ bool SceneSetApp::initialize() {
             m_appManager->Release();
             m_appManager = nullptr;
         }
+        restoreMaskOnExit();
         return false;
     }
     if (m_downloadDirectory.empty()) {
@@ -1080,8 +1091,6 @@ bool SceneSetApp::movePackageToPreinstallDirectory(const std::filesystem::path& 
     const fs::path destination = preinstallDir / sourceFile.filename();
 
     try {
-        std::error_code cleanupError;
-        fs::remove(destination, cleanupError);
         fs::rename(sourceFile, destination);
         if (!flushFileData(destination)) {
             std::cerr << "Warning: failed to flush staged package file: " << destination
@@ -1093,7 +1102,6 @@ bool SceneSetApp::movePackageToPreinstallDirectory(const std::filesystem::path& 
         if (e.code() == std::errc::cross_device_link) {
             try {
                 std::error_code cleanupError;
-                fs::remove(destination, cleanupError);
                 fs::copy_file(sourceFile, destination, fs::copy_options::overwrite_existing);
                 fs::remove(sourceFile, cleanupError);
                 if (cleanupError) {

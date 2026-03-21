@@ -21,6 +21,7 @@
 
 #include <filesystem>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <sys/stat.h>
 
@@ -161,6 +162,9 @@ bool ExtractPackageMetadata(const std::filesystem::path& packagePath,
                             std::string& packageAppId,
                             std::string& packageVersion)
 {
+#ifndef DAC_APP_CERT_PATH
+#error "DAC_APP_CERT_PATH must be defined, (CMake default: /etc/rdk/certs)."
+#endif
     static const std::filesystem::path kCertDir(DAC_APP_CERT_PATH);
     return ExtractPackageMetadata(packagePath, kCertDir, packageAppId, packageVersion);
 }
