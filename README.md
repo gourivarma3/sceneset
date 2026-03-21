@@ -27,6 +27,9 @@ SceneSet is designed to run as a systemd service that:
 - **`THUNDER_ACCESS`**: Optional path to Thunder communicator socket
   - Default: `/tmp/communicator`
 
+- **`SCENESET_INITIAL_DOWNLOAD_SWEEP`**: Process packages already in the download directory at monitor startup
+  - Default: `0` (disabled). Set to `1`/`true`/`yes`/`on` to enable, `0`/`false`/`no`/`off` to disable
+
 ## Build Instructions
 
 The project uses CMake for building

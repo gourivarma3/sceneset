@@ -20,6 +20,7 @@
 #include "SceneSet.h"
 #include "RalfPackageSupport.h"
 #include <cerrno>
+#include <algorithm>
 #include <chrono>
 #include <cstring>
 #include <fstream>
@@ -52,11 +53,12 @@
 #define SCENESET_CONFIG_FILE "/opt/sceneset_app.conf"
 #define FACTORY_APPS_COPIED_MARKER "/opt/persistent/.sceneset_factory_apps_copied"
 
-namespace {
+namespace { // begin file-private constants and helpers
 constexpr const char* kPackageManagerRdkEmsCallsign = "org.rdk.PackageManagerRDKEMS";
 constexpr const char* kPackageManagerDownloadDirKey = "downloadDir";
 constexpr const char* kPreinstallManagerCallsign = "org.rdk.PreinstallManager";
 constexpr const char* kPreinstallDirectoryKey = "appPreinstallDirectory";
+constexpr const char* kInitialDownloadSweepEnvVar = "SCENESET_INITIAL_DOWNLOAD_SWEEP";
 constexpr std::chrono::milliseconds kDownloadedPackageSettleDelayMs(1000);
 volatile std::sig_atomic_t g_terminateRequested = 0;
 
@@ -90,7 +92,28 @@ bool isReadyDownloadedFile(const std::filesystem::path& filePath) {
     }
     return true;
 }
+
+bool isEnvFlagEnabled(const char* envVarName, const bool defaultValue) {
+    const char* value = std::getenv(envVarName);
+    if (value == nullptr) {
+        return defaultValue;
+    }
+
+    std::string rawValue(value);
+    std::transform(rawValue.begin(), rawValue.end(), rawValue.begin(), ::tolower);
+
+    if (rawValue == "1" || rawValue == "true" || rawValue == "yes" || rawValue == "on") {
+        return true;
+    }
+    if (rawValue == "0" || rawValue == "false" || rawValue == "no" || rawValue == "off") {
+        return false;
+    }
+
+    std::cerr << "Invalid value for " << envVarName << "='" << rawValue
+              << "'. Using default=" << (defaultValue ? "enabled" : "disabled") << std::endl;
+    return defaultValue;
 }
+} // end file-private constants and helpers
 
 static std::string getDefaultAppName() {
     std::ifstream configFile(SCENESET_CONFIG_FILE);
@@ -804,6 +827,42 @@ void SceneSetApp::monitorDownloadDirectory() {
 
         std::cout << "Monitoring download directory for reference app packages: " << m_downloadDirectory << std::endl;
 
+        auto processCandidateFile = [this](const fs::path& packagePath) {
+            std::this_thread::sleep_for(kDownloadedPackageSettleDelayMs);
+            if (!m_stopDownloadMonitorThread && isReadyDownloadedFile(packagePath)) {
+                if (!flushFileData(packagePath)) {
+                    std::cerr << "Warning: failed to flush downloaded file before verification: "
+                              << packagePath << " error=" << strerror(errno) << std::endl;
+                }
+                processDownloadedPackage(packagePath);
+            }
+        };
+
+        // Optionally perform an initial sweep of the download directory
+        // to catch any packages that were downloaded before this monitor started.
+        const bool isInitialSweepEnabled = isEnvFlagEnabled(kInitialDownloadSweepEnvVar, false);
+        std::cout << "Initial download directory sweep is "
+                  << (isInitialSweepEnabled ? "enabled" : "disabled")
+                  << " (" << kInitialDownloadSweepEnvVar << ")" << std::endl;
+        if (isInitialSweepEnabled) {
+            std::error_code iterEc;
+            for (const auto& entry : fs::directory_iterator(downloadDir, fs::directory_options::skip_permission_denied, iterEc)) {
+                if (iterEc) {
+                    std::cerr << "Initial sweep failed while scanning download directory: "
+                              << iterEc.message() << std::endl;
+                    break;
+                }
+
+                std::error_code entryEc;
+                if (!entry.is_regular_file(entryEc) || entryEc) {
+                    continue;
+                }
+
+                processCandidateFile(entry.path());
+            }
+        }
+
+        // Start monitoring for new files in the download directory.
         constexpr size_t EVENT_SIZE = sizeof(WPEFramework::Core::inotify_event);
         constexpr size_t BUF_LEN = (EVENT_SIZE + NAME_MAX + 1) * 16;
         alignas(WPEFramework::Core::inotify_event) char buf[BUF_LEN];
@@ -824,15 +883,7 @@ void SceneSetApp::monitorDownloadDirectory() {
             for (const char* ptr = buf; ptr < buf + len; ) {
                 const auto* event = reinterpret_cast<const WPEFramework::Core::inotify_event*>(ptr);
                 if (event->len > 0 && !(event->mask & IN_ISDIR)) {
-                    const auto packagePath = downloadDir / event->name;
-                    std::this_thread::sleep_for(kDownloadedPackageSettleDelayMs);
-                    if (!m_stopDownloadMonitorThread && isReadyDownloadedFile(packagePath)) {
-                        if (!flushFileData(packagePath)) {
-                            std::cerr << "Warning: failed to flush downloaded file before verification: "
-                                      << packagePath << " error=" << strerror(errno) << std::endl;
-                        }
-                        processDownloadedPackage(packagePath);
-                    }
+                    processCandidateFile(downloadDir / event->name);
                 }
                 ptr += EVENT_SIZE + event->len;
             }
