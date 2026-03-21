@@ -37,6 +37,10 @@
 #include <string_view>
 #include <optional>
 
+#ifndef GIT_SHORT_SHA
+#define GIT_SHORT_SHA "unknown"
+#endif
+
 #ifndef SCENESET_DEFAULT_APPNAME
 #define SCENESET_DEFAULT_APPNAME ""
 #endif
@@ -581,6 +585,7 @@ void SceneSetApp::waitForTermSignal() {
 
 void SceneSetApp::handleTerminationSignal(int signal) {
     (void)signal;
+    SceneSetApp::getInstance().onTerminate();
 }
 
 void SceneSetApp::onTerminate() {
@@ -606,6 +611,7 @@ void SceneSetApp::run() {
                   "STATUS=ComRPC client is Successfully Initialized\n"
                   "MAINPID=%lu",
                (unsigned long)getpid());
+    std::cout << "SceneSetApp version: " << GIT_SHORT_SHA << std::endl;
     if (m_referenceAppId.empty()) {
         std::cout << "No reference app ID specified, skipping preinstall and app launch" << std::endl;
         return;

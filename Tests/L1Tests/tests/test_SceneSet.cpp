@@ -44,6 +44,10 @@ std::filesystem::path MakeUniqueTempPath(const std::string& prefix) {
 
 class SceneSetAppTestPeer {
 public:
+    static const std::string& GetReferenceAppId(const SceneSetApp& app) {
+        return app.m_referenceAppId;
+    }
+
     static void SetPreinstallDirectory(SceneSetApp& app, const std::string& preinstallDirectory) {
         app.m_preinstallDirectory = preinstallDirectory;
     }
@@ -73,7 +77,6 @@ public:
 thread_local std::string g_fakeExtractorRefAppId;
 
 bool FakeExtractMetadataSuccess(const std::filesystem::path&,
-                               const std::filesystem::path&,
                                std::string& appId,
                                std::string& version) {
     appId = g_fakeExtractorRefAppId;
@@ -315,7 +318,7 @@ TEST_F(SceneSetTest, ProcessDownloadedPackageStagesReferenceBundleWithInjectedMe
     }
 
     SceneSetAppTestPeer::SetPreinstallDirectory(app, dstDir.string());
-    g_fakeExtractorRefAppId = app.m_referenceAppId;
+    g_fakeExtractorRefAppId = SceneSetAppTestPeer::GetReferenceAppId(app);
     SceneSetAppTestPeer::SetMetadataExtractorForTesting(&FakeExtractMetadataSuccess);
 
     const bool result = SceneSetAppTestPeer::ProcessDownloadedPackage(app, srcFile);

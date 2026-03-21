@@ -98,12 +98,27 @@ else()
     message(FATAL_ERROR "libralf package found but no usable CMake target exported (expected ralf-utils::libralf, libralf, ralf-utils::libralf-static, or libralf-static)")
 endif()
 
+# Get Git short SHA for logging version.
+execute_process(
+    COMMAND git rev-parse --short HEAD
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE GIT_SHORT_SHA
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+)
+
+# If Git command fails, set a default value
+if(NOT GIT_SHORT_SHA)
+    set(GIT_SHORT_SHA "unknown")
+endif()
+
 target_compile_definitions(${TARGET} PRIVATE
     SCENESET_DEFAULT_APPNAME="${SCENESET_DEFAULT_APPNAME}"
     FACTORY_APP_PATH="${FACTORY_APP_PATH}"
     APP_PREINSTALL_DIRECTORY="${APP_PREINSTALL_DIRECTORY}"
     DAC_APP_CERT_PATH="${DAC_APP_CERT_PATH}"
     DISABLE_REFERENCE_APP_UPDATE=$<BOOL:${DISABLE_REFERENCE_APP_UPDATE}>
+    GIT_SHORT_SHA="${GIT_SHORT_SHA}"
 )
 
 INSTALL (TARGETS ${TARGET}
