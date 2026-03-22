@@ -328,7 +328,11 @@ TEST_F(SceneSetTest, ProcessDownloadedPackageStagesReferenceBundleWithInjectedMe
     }
 
     SceneSetAppTestPeer::SetPreinstallDirectory(app, dstDir.string());
-    g_fakeExtractorRefAppId = SceneSetAppTestPeer::GetReferenceAppId(app);
+    const std::string& referenceAppId = SceneSetAppTestPeer::GetReferenceAppId(app);
+    if (referenceAppId.empty()) {
+        GTEST_SKIP() << "SceneSet reference app id is empty; SCENESET_DEFAULT_APPNAME is not configured for this build.";
+    }
+    g_fakeExtractorRefAppId = referenceAppId;
     SceneSetAppTestPeer::SetMetadataExtractorForTesting(&FakeExtractMetadataSuccess);
     MetadataExtractorResetGuard metadataExtractorResetGuard;
 

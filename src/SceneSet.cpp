@@ -68,24 +68,21 @@ using MetadataExtractor = bool (*)(const std::filesystem::path&, std::string&, s
 MetadataExtractor g_metadataExtractor = &ralf_support::ExtractPackageMetadata;
 
 bool flushFileData(const std::filesystem::path& filePath) {
-    const int fd = ::open(filePath.c_str(), O_RDONLY | O_CLOEXEC);
+    int openFlags = O_RDONLY | O_CLOEXEC;
+#ifdef O_NOFOLLOW
+    openFlags |= O_NOFOLLOW;
+#endif
+    const int fd = ::open(filePath.c_str(), openFlags);
     if (fd < 0) {
         return false;
     }
 
     const int originalErrno = errno;
-    int syncResult = ::fdatasync(fd);
-    if (syncResult != 0) {
-        syncResult = ::fsync(fd);
-        if (syncResult != 0) {
-            const int fsyncErrno = errno;
-            ::close(fd);
-            errno = fsyncErrno;
-            return false;
-        }
+    if (::fsync(fd) != 0) {
+        const int fsyncErrno = errno;
         ::close(fd);
-        errno = originalErrno;
-        return true;
+        errno = fsyncErrno;
+        return false;
     }
     ::close(fd);
     errno = originalErrno;
@@ -97,9 +94,15 @@ bool isReadyDownloadedFile(const std::filesystem::path& filePath) {
     if (!std::filesystem::exists(filePath, ec) || ec) {
         return false;
     }
-    if (!std::filesystem::is_regular_file(filePath, ec) || ec) {
+
+    const auto fileStatus = std::filesystem::symlink_status(filePath, ec);
+    if (ec || std::filesystem::is_symlink(fileStatus)) {
         return false;
     }
+    if (!std::filesystem::is_regular_file(fileStatus)) {
+        return false;
+    }
+
     const auto size = std::filesystem::file_size(filePath, ec);
     if (ec || size == 0) {
         return false;
