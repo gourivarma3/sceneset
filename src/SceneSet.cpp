@@ -1039,6 +1039,7 @@ bool SceneSetApp::shouldRunInitialDownloadSweep() const {
     return isEnvFlagEnabled(kInitialDownloadSweepEnvVar, false);
 }
 
+#ifdef UNIT_TEST
 void SceneSetApp::setMetadataExtractorForTesting(bool (*extractor)(const std::filesystem::path&, std::string&, std::string&)) {
     g_metadataExtractor = (extractor != nullptr) ? extractor : static_cast<MetadataExtractor>(&ralf_support::ExtractPackageMetadata);
 }
@@ -1046,6 +1047,7 @@ void SceneSetApp::setMetadataExtractorForTesting(bool (*extractor)(const std::fi
 void SceneSetApp::resetMetadataExtractorForTesting() {
     g_metadataExtractor = static_cast<MetadataExtractor>(&ralf_support::ExtractPackageMetadata);
 }
+#endif
 
 bool SceneSetApp::processDownloadedPackage(const std::filesystem::path& packagePath) {
     std::string packageAppId;

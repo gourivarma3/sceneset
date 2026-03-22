@@ -39,6 +39,7 @@ set(TEST_SRC
 
 # Create the test executable
 add_executable(${TEST_EXECUTABLE} ${TEST_SRC})
+target_compile_definitions(${TEST_EXECUTABLE} PRIVATE UNIT_TEST)
 
 # WPEFramework library paths
 set(WPEFRAMEWORK_LIB_DIR ${CMAKE_INSTALL_PREFIX}/lib)

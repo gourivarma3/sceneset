@@ -62,68 +62,82 @@ bool ExtractPackageMetadata(const std::filesystem::path& packagePath,
     std::shared_ptr<ralf::VerificationBundle> verificationBundlePtr;
     size_t certCount = 0;
 
+    struct ::stat dirStat{};
+    const bool dirStatOk = (::stat(certDir.string().c_str(), &dirStat) == 0);
+    const time_t certDirMtime = dirStatOk ? dirStat.st_mtime : 0;
+    bool needRebuild = false;
+
     {
         std::lock_guard<std::mutex> lock(g_certCacheMutex);
-
-        struct ::stat dirStat{};
-        const bool dirStatOk = (::stat(certDir.string().c_str(), &dirStat) == 0);
-        const time_t certDirMtime = dirStatOk ? dirStat.st_mtime : 0;
-
         if (dirStatOk && g_certCache.valid &&
             g_certCache.dir == certDir && g_certCache.mtime == certDirMtime) {
             // Cache hit: reuse the already-loaded bundle.
             verificationBundlePtr = g_certCache.bundle;
             certCount = g_certCache.certCount;
         } else {
-            // Cache miss: scan the directory and build a new bundle.
-            auto newBundle = std::make_shared<ralf::VerificationBundle>();
-            size_t newCertCount = 0;
+            needRebuild = true;
+        }
+    }
 
-            try {
-                std::error_code certEc;
-                if (std::filesystem::exists(certDir, certEc) && !certEc &&
-                    std::filesystem::is_directory(certDir, certEc) && !certEc) {
-                    std::filesystem::directory_iterator it(
-                        certDir,
-                        std::filesystem::directory_options::skip_permission_denied,
-                        certEc);
-                    if (certEc) {
-                        std::cerr << "Error while opening cert directory " << certDir << ": " << certEc.message() << std::endl;
-                    }
+    std::shared_ptr<ralf::VerificationBundle> newBundle;
+    size_t newCertCount = 0;
+    if (!verificationBundlePtr && needRebuild) {
+        newBundle = std::make_shared<ralf::VerificationBundle>();
 
-                    std::filesystem::directory_iterator end;
-                    for (; it != end; it.increment(certEc)) {
-                        if (certEc) {
-                            std::cerr << "Error while scanning cert directory " << certDir << ": " << certEc.message() << std::endl;
-                            break;
-                        }
-
-                        const auto& dirEntry = *it;
-
-                        std::error_code entryEc;
-                        if (!dirEntry.is_regular_file(entryEc)) {
-                            if (entryEc) {
-                                std::cerr << "Skipping cert entry due to stat error " << dirEntry.path() << ": " << entryEc.message() << std::endl;
-                            }
-                            continue;
-                        }
-
-                        auto certResult = ralf::Certificate::loadFromFile(dirEntry.path().string());
-                        if (certResult.is_error()) {
-                            std::cerr << "Failed to load certificate from file: " << dirEntry.path()
-                                      << " Error: " << certResult.error().what() << std::endl;
-                            continue;
-                        }
-
-                        newBundle->addCertificate(certResult.value());
-                        ++newCertCount;
-                    }
+        try {
+            std::error_code certEc;
+            if (std::filesystem::exists(certDir, certEc) && !certEc &&
+                std::filesystem::is_directory(certDir, certEc) && !certEc) {
+                std::filesystem::directory_iterator it(
+                    certDir,
+                    std::filesystem::directory_options::skip_permission_denied,
+                    certEc);
+                if (certEc) {
+                    std::cerr << "Error while opening cert directory " << certDir << ": " << certEc.message() << std::endl;
                 }
-            } catch (const std::filesystem::filesystem_error& fsError) {
-                std::cerr << "Filesystem error while loading certificates from " << certDir << ": " << fsError.what() << std::endl;
-                return false;
-            }
 
+                std::filesystem::directory_iterator end;
+                for (; it != end; it.increment(certEc)) {
+                    if (certEc) {
+                        std::cerr << "Error while scanning cert directory " << certDir << ": " << certEc.message() << std::endl;
+                        break;
+                    }
+
+                    const auto& dirEntry = *it;
+
+                    std::error_code entryEc;
+                    if (!dirEntry.is_regular_file(entryEc)) {
+                        if (entryEc) {
+                            std::cerr << "Skipping cert entry due to stat error " << dirEntry.path() << ": " << entryEc.message() << std::endl;
+                        }
+                        continue;
+                    }
+
+                    auto certResult = ralf::Certificate::loadFromFile(dirEntry.path().string());
+                    if (certResult.is_error()) {
+                        std::cerr << "Failed to load certificate from file: " << dirEntry.path()
+                                  << " Error: " << certResult.error().what() << std::endl;
+                        continue;
+                    }
+
+                    newBundle->addCertificate(certResult.value());
+                    ++newCertCount;
+                }
+            }
+        } catch (const std::filesystem::filesystem_error& fsError) {
+            std::cerr << "Filesystem error while loading certificates from " << certDir << ": " << fsError.what() << std::endl;
+            return false;
+        }
+    }
+
+    if (!verificationBundlePtr) {
+        std::lock_guard<std::mutex> lock(g_certCacheMutex);
+        if (dirStatOk && g_certCache.valid &&
+            g_certCache.dir == certDir && g_certCache.mtime == certDirMtime) {
+            // Another thread refreshed the cache while we were rebuilding.
+            verificationBundlePtr = g_certCache.bundle;
+            certCount = g_certCache.certCount;
+        } else if (newBundle) {
             if (dirStatOk) {
                 g_certCache.dir = certDir;
                 g_certCache.mtime = certDirMtime;

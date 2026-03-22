@@ -41,7 +41,9 @@
 using namespace std;
 using namespace WPEFramework;
 
+#ifdef UNIT_TEST
 class SceneSetAppTestPeer;
+#endif
 
 class SceneSetApp {
 public:
@@ -69,7 +71,9 @@ public:
     void run();
 
 private:
+#ifdef UNIT_TEST
     friend class SceneSetAppTestPeer;
+#endif
 
     std::atomic<bool> m_isActive;
     std::mutex m_lock;
@@ -100,8 +104,10 @@ private:
     bool shouldRunInitialDownloadSweep() const;
     bool processDownloadedPackage(const std::filesystem::path& packagePath);
     bool movePackageToPreinstallDirectory(const std::filesystem::path& sourceFile);
+#ifdef UNIT_TEST
     static void setMetadataExtractorForTesting(bool (*extractor)(const std::filesystem::path&, std::string&, std::string&));
     static void resetMetadataExtractorForTesting();
+#endif
     std::string getInstalledReferenceAppVersion() const;
     std::string getThunderAccessPath() const;
     bool fetchPluginConfigValue(const std::string& callsign, const std::string& configKey, std::string& value) const;
