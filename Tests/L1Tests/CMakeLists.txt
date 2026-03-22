@@ -32,6 +32,7 @@ set(TEST_EXECUTABLE SceneSetL1TestsIN)
 # Source files - include the actual SceneSet implementation
 set(TEST_SRC
     tests/test_SceneSet.cpp
+    tests/test_download_monitor.cpp
     ../../src/SceneSet.cpp
     ../../src/RalfPackageSupport.cpp
    )
