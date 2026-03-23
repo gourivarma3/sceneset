@@ -25,7 +25,7 @@
 #include <thread>
 #include <atomic>
 #include <csignal>
-#include <condition_variable>
+#include <filesystem>
 #include <mutex>
 #include <systemd/sd-daemon.h>
 
@@ -40,6 +40,10 @@
 
 using namespace std;
 using namespace WPEFramework;
+
+#ifdef UNIT_TEST
+class SceneSetAppTestPeer;
+#endif
 
 class SceneSetApp {
 public:
@@ -67,7 +71,10 @@ public:
     void run();
 
 private:
-    std::condition_variable m_act_cv;
+#ifdef UNIT_TEST
+    friend class SceneSetAppTestPeer;
+#endif
+
     std::atomic<bool> m_isActive;
     std::mutex m_lock;
     Exchange::IAppManager *m_appManager;
@@ -77,15 +84,34 @@ private:
     std::string m_appmgrCallsign, m_preinstallCallsign;
     const std::string m_referenceAppId;
     std::string m_comrpcPath;
+    std::string m_downloadDirectory;
+    std::string m_preinstallDirectory;
 
     std::unique_ptr<std::thread> m_launchThread;
     std::atomic<bool> m_stopLaunchThread;
     std::atomic<bool> m_appLaunched;
     std::atomic<bool> m_pendingRestart;
     std::mutex m_launchThreadMutex;
+    std::unique_ptr<std::thread> m_downloadMonitorThread;
+    std::atomic<bool> m_stopDownloadMonitorThread;
+    std::mutex m_downloadMonitorMutex;
 
     void stopCurrentLaunchThread();
     void startLaunchThread();
+    void startDownloadMonitorThread();
+    void stopDownloadMonitorThread();
+    void monitorDownloadDirectory();
+    bool shouldRunInitialDownloadSweep() const;
+    bool processDownloadedPackage(const std::filesystem::path& packagePath);
+    bool movePackageToPreinstallDirectory(const std::filesystem::path& sourceFile);
+#ifdef UNIT_TEST
+    static void setMetadataExtractorForTesting(bool (*extractor)(const std::filesystem::path&, std::string&, std::string&));
+    static void resetMetadataExtractorForTesting();
+#endif
+    std::string getInstalledReferenceAppVersion() const;
+    std::string getThunderAccessPath() const;
+    bool fetchPluginConfigValue(const std::string& callsign, const std::string& configKey, std::string& value) const;
+    void resolveDynamicDirectories();
 
     class AppManagerEventHandler : public Exchange::IAppManager::INotification {
     public:
