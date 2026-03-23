@@ -18,10 +18,29 @@
  */
 
 #include "SceneSet.h"
+#include "RalfPackageSupport.h"
+#include <cerrno>
+#include <algorithm>
+#include <cctype>
+#include <chrono>
+#include <condition_variable>
+#include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <filesystem>
+#include <fcntl.h>
+#include <limits.h>
+#include <deque>
+#include <poll.h>
+#include <pthread.h>
+#include <sys/inotify.h>
+#include <unistd.h>
 #include <string_view>
 #include <optional>
+
+#ifndef GIT_SHORT_SHA
+#define GIT_SHORT_SHA "unknown"
+#endif
 
 #ifndef SCENESET_DEFAULT_APPNAME
 #define SCENESET_DEFAULT_APPNAME ""
@@ -37,6 +56,84 @@
 
 #define SCENESET_CONFIG_FILE "/opt/sceneset_app.conf"
 #define FACTORY_APPS_COPIED_MARKER "/opt/persistent/.sceneset_factory_apps_copied"
+
+namespace { // begin file-private constants and helpers
+constexpr const char* kPackageManagerRdkEmsCallsign = "org.rdk.PackageManagerRDKEMS";
+constexpr const char* kPackageManagerDownloadDirKey = "downloadDir";
+constexpr const char* kPreinstallDirectoryKey = "appPreinstallDirectory";
+constexpr const char* kInitialDownloadSweepEnvVar = "SCENESET_INITIAL_DOWNLOAD_SWEEP";
+constexpr std::chrono::milliseconds kDownloadedPackageSettleDelayMs(1000);
+
+using MetadataExtractor = bool (*)(const std::filesystem::path&, std::string&, std::string&);
+MetadataExtractor g_metadataExtractor = &ralf_support::ExtractPackageMetadata;
+
+bool flushFileData(const std::filesystem::path& filePath) {
+    int openFlags = O_RDONLY | O_CLOEXEC;
+#ifdef O_NOFOLLOW
+    openFlags |= O_NOFOLLOW;
+#endif
+    const int fd = ::open(filePath.c_str(), openFlags);
+    if (fd < 0) {
+        return false;
+    }
+
+    const int originalErrno = errno;
+    if (::fsync(fd) != 0) {
+        const int fsyncErrno = errno;
+        ::close(fd);
+        errno = fsyncErrno;
+        return false;
+    }
+    ::close(fd);
+    errno = originalErrno;
+    return true;
+}
+
+bool isReadyDownloadedFile(const std::filesystem::path& filePath) {
+    std::error_code ec;
+    if (!std::filesystem::exists(filePath, ec) || ec) {
+        return false;
+    }
+
+    const auto fileStatus = std::filesystem::symlink_status(filePath, ec);
+    if (ec || std::filesystem::is_symlink(fileStatus)) {
+        return false;
+    }
+    if (!std::filesystem::is_regular_file(fileStatus)) {
+        return false;
+    }
+
+    const auto size = std::filesystem::file_size(filePath, ec);
+    if (ec || size == 0) {
+        return false;
+    }
+    return true;
+}
+
+bool isEnvFlagEnabled(const char* envVarName, const bool defaultValue) {
+    const char* value = std::getenv(envVarName);
+    if (value == nullptr) {
+        return defaultValue;
+    }
+
+    std::string rawValue(value);
+    std::transform(rawValue.begin(), rawValue.end(), rawValue.begin(),
+        [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+
+    if (rawValue == "1" || rawValue == "true" || rawValue == "yes" || rawValue == "on") {
+        return true;
+    }
+    if (rawValue == "0" || rawValue == "false" || rawValue == "no" || rawValue == "off") {
+        return false;
+    }
+
+    std::cerr << "Invalid value for " << envVarName << "='" << rawValue
+              << "'. Using default=" << (defaultValue ? "enabled" : "disabled") << std::endl;
+    return defaultValue;
+}
+} // end file-private constants and helpers
 
 static std::string getDefaultAppName() {
     std::ifstream configFile(SCENESET_CONFIG_FILE);
@@ -58,18 +155,38 @@ static std::string getDefaultAppName() {
 }
 
 SceneSetApp::SceneSetApp()
-    :  m_act_cv(), m_isActive(false), m_lock(), m_appManager(nullptr), m_preinstallManager(nullptr), m_appManagerEventHandler(nullptr), m_preinstallManagerEventHandler(nullptr), m_appmgrCallsign("org.rdk.AppManager"), m_preinstallCallsign("org.rdk.PreinstallManager"), m_referenceAppId(getDefaultAppName()), m_comrpcPath("/tmp/communicator"), m_launchThread(nullptr), m_stopLaunchThread(false), m_appLaunched(false), m_pendingRestart(false), m_launchThreadMutex() {
+    : m_isActive(false), m_lock(), m_appManager(nullptr), m_preinstallManager(nullptr), m_appManagerEventHandler(nullptr), m_preinstallManagerEventHandler(nullptr), m_appmgrCallsign("org.rdk.AppManager"), m_preinstallCallsign("org.rdk.PreinstallManager"), m_referenceAppId(getDefaultAppName()), m_comrpcPath("/tmp/communicator"), m_downloadDirectory(""), m_preinstallDirectory(APP_PREINSTALL_DIRECTORY), m_launchThread(nullptr), m_stopLaunchThread(false), m_appLaunched(false), m_pendingRestart(false), m_launchThreadMutex(), m_downloadMonitorThread(nullptr), m_stopDownloadMonitorThread(false), m_downloadMonitorMutex() {
 }
 
 SceneSetApp::~SceneSetApp() {
+#if !DISABLE_REFERENCE_APP_UPDATE
+    stopDownloadMonitorThread();
+#endif
     stopCurrentLaunchThread();
     unRegisterForAppEvents();
     unRegisterForPreinstallEvents();
 }
 
 bool SceneSetApp::initialize() {
-    const char *thunderAccess = std::getenv("THUNDER_ACCESS");
-    std::string envThunderAccess = (thunderAccess != nullptr) ? thunderAccess : m_comrpcPath;
+    // Block termination signals for this thread before initialization work;
+    // new threads inherit this mask and waitForTermSignal() consumes via sigwait().
+    // Save the old mask so we can restore it on early failure returns.
+    sigset_t termMask, oldMask;
+    sigemptyset(&termMask);
+    sigaddset(&termMask, SIGTERM);
+    sigaddset(&termMask, SIGINT);
+    const int maskResult = pthread_sigmask(SIG_BLOCK, &termMask, &oldMask);
+    if (maskResult != 0) {
+        std::cerr << "Failed to block termination signals: " << strerror(maskResult) << std::endl;
+        return false;
+    }
+
+    // Restore original mask on early exit (RAII-like cleanup for early returns).
+    auto restoreMaskOnExit = [&oldMask]() {
+        pthread_sigmask(SIG_SETMASK, &oldMask, nullptr);
+    };
+
+    const std::string envThunderAccess = getThunderAccessPath();
 
     std::cout << "Thunder Access Path: " << envThunderAccess << std::endl;
 
@@ -80,6 +197,7 @@ bool SceneSetApp::initialize() {
 
     if (!appManagerClient.IsValid()) {
         std::cerr << "Failed to create COMRPC client for AppManager." << std::endl;
+        restoreMaskOnExit();
         return false;
     }
 
@@ -89,6 +207,7 @@ bool SceneSetApp::initialize() {
     m_appManager = appManagerClient->Open<Exchange::IAppManager>(m_appmgrCallsign.c_str());
     if (m_appManager == nullptr) {
         std::cerr << "Failed to open IAppManager interface." << std::endl;
+        restoreMaskOnExit();
         return false;
     }
 
@@ -104,6 +223,7 @@ bool SceneSetApp::initialize() {
             m_appManager->Release();
             m_appManager = nullptr;
         }
+        restoreMaskOnExit();
         return false;
     }
 
@@ -117,20 +237,40 @@ bool SceneSetApp::initialize() {
             m_appManager->Release();
             m_appManager = nullptr;
         }
+        restoreMaskOnExit();
         return false;
     }
 
     std::cout << "Successfully opened " << m_preinstallCallsign << " interface" << std::endl;
 
+    resolveDynamicDirectories();
+    if (m_preinstallDirectory.empty()) {
+        // Fall back to compile-time default if dynamic lookup did not yield a value.
+        m_preinstallDirectory = APP_PREINSTALL_DIRECTORY;
+    }
+    if (m_preinstallDirectory.empty()) {
+        std::cerr << "No valid appPreinstallDirectory configured, cannot proceed." << std::endl;
+        if (m_preinstallManager != nullptr) {
+            m_preinstallManager->Release();
+            m_preinstallManager = nullptr;
+        }
+        if (m_appManager != nullptr) {
+            m_appManager->Release();
+            m_appManager = nullptr;
+        }
+        restoreMaskOnExit();
+        return false;
+    }
+    if (m_downloadDirectory.empty()) {
+        std::cout << "downloadDir is empty. Reference app update monitoring will remain disabled." << std::endl;
+    }
+
     {
         lock_guard<mutex> lkgd(m_lock);
         m_isActive = true;
     }
-    cout << "Registered to AppManager. Setting term signal" << endl;
-    // Register term signal handler
-    signal(SIGTERM, [](int x) {
-        SceneSetApp::handleTerminationSignal(x);
-    });
+
+    cout << "Registered to AppManager. Waiting for term signal via sigwait" << endl;
     return m_isActive;
 }
 
@@ -265,10 +405,10 @@ bool SceneSetApp::isReferenceAppInstalled() {
     JsonArray::Iterator index = apps.Elements();
     while (index.Next()) {
         const JsonValue& element = index.Current();
-        
+
         if (element.Content() == JsonValue::type::OBJECT) {
             JsonObject appObj = element.Object();
-            
+
             if (appObj.HasLabel("appId")) {
                 const JsonValue& appIdValue = appObj["appId"];
                 if (appIdValue.Content() == JsonValue::type::STRING) {
@@ -308,11 +448,11 @@ void SceneSetApp::markFactoryAppsCopied() {
 
 bool SceneSetApp::copyFactoryAppsToPreinstall() {
     namespace fs = std::filesystem;
-    
-    std::cout << "Copying factory apps from " << FACTORY_APP_PATH << " to " << APP_PREINSTALL_DIRECTORY << std::endl;
+
+    std::cout << "Copying factory apps from " << FACTORY_APP_PATH << " to " << m_preinstallDirectory << std::endl;
 
     fs::path sourcePath(FACTORY_APP_PATH);
-    fs::path destPath(APP_PREINSTALL_DIRECTORY);
+    fs::path destPath(m_preinstallDirectory);
 
     if (!fs::exists(sourcePath)) {
         std::cerr << "Failed to open factory apps location: " << FACTORY_APP_PATH << std::endl;
@@ -321,7 +461,7 @@ bool SceneSetApp::copyFactoryAppsToPreinstall() {
 
     // Create preinstall directory if it doesn't exist
     if (!fs::exists(destPath)) {
-        std::cout << "Creating preinstall directory: " << APP_PREINSTALL_DIRECTORY << std::endl;
+        std::cout << "Creating preinstall directory: " << m_preinstallDirectory << std::endl;
         try {
             fs::create_directories(destPath);
         } catch (const fs::filesystem_error& e) {
@@ -340,20 +480,20 @@ bool SceneSetApp::copyFactoryAppsToPreinstall() {
             }
 
             const std::string fileName = entry.path().filename().string();
-            
+
             // Copy the bundle file directly to the preinstall directory
             fs::path destination = destPath / fileName;
-            
+
             try {
                 std::cout << "Copying bundle: " << fileName << " to preinstall directory" << std::endl;
-                
-                fs::copy_file(entry.path(), destination, 
+
+                fs::copy_file(entry.path(), destination,
                              fs::copy_options::overwrite_existing);
                 fileCount++;
                 std::cout << "Successfully copied bundle: " << fileName << std::endl;
-                
+
             } catch (const fs::filesystem_error& e) {
-                std::cerr << "Failed to copy bundle: " << fileName 
+                std::cerr << "Failed to copy bundle: " << fileName
                           << " - " << e.what() << std::endl;
             }
         }
@@ -375,21 +515,21 @@ bool SceneSetApp::copyFactoryAppsToPreinstall() {
 
 void SceneSetApp::cleanupPreinstallFolder() {
     namespace fs = std::filesystem;
-    
-    std::cout << "Cleaning up preinstall folder: " << APP_PREINSTALL_DIRECTORY << std::endl;
-    
-    const fs::path preinstallPath(APP_PREINSTALL_DIRECTORY);
-    
+
+    std::cout << "Cleaning up preinstall folder: " << m_preinstallDirectory << std::endl;
+
+    const fs::path preinstallPath(m_preinstallDirectory);
+
     if (!fs::exists(preinstallPath)) {
         std::cout << "Preinstall directory does not exist, nothing to clean up" << std::endl;
         return;
     }
-    
+
     try {
         int removedCount = 0;
         for (const auto& entry : fs::directory_iterator(preinstallPath)) {
             const auto entryName = entry.path().filename().string();
-            
+
             try {
                 if (const auto status = entry.status(); fs::is_directory(status)) {
                     std::cout << "Removing directory: " << entryName << std::endl;
@@ -407,7 +547,7 @@ void SceneSetApp::cleanupPreinstallFolder() {
                           << " - " << e.what() << std::endl;
             }
         }
-        
+
         if (removedCount > 0) {
             std::cout << "Successfully cleaned up " << removedCount << " items from preinstall folder" << std::endl;
         } else {
@@ -434,25 +574,37 @@ void SceneSetApp::checkAndLaunchIfAlreadyInstalled() {
 }
 
 void SceneSetApp::waitForTermSignal() {
-    std::thread termThread([&]() {
-        while (m_isActive) {
-            std::unique_lock<std::mutex> ulock(m_lock);
-            m_act_cv.wait(ulock);
+    sigset_t termMask;
+    sigemptyset(&termMask);
+    sigaddset(&termMask, SIGTERM);
+    sigaddset(&termMask, SIGINT);
+
+    while (m_isActive.load()) {
+        int signalNumber = 0;
+        const int waitResult = sigwait(&termMask, &signalNumber);
+        if (waitResult != 0) {
+            std::cerr << "sigwait failed: " << strerror(waitResult) << std::endl;
+            continue;
         }
-        std::cout << "Exiting application..." << std::endl;
-    });
-    termThread.join();
+        onTerminate();
+    }
+
+    std::cout << "Exiting application..." << std::endl;
 }
 
 void SceneSetApp::handleTerminationSignal(int signal) {
-    std::cout << "Received termination signal: " << signal << std::endl;
+    (void)signal;
     SceneSetApp::getInstance().onTerminate();
 }
 
 void SceneSetApp::onTerminate() {
-    std::unique_lock<std::mutex> ulock(m_lock);
-    m_isActive = false;
-    m_act_cv.notify_one();
+    {
+        std::lock_guard<std::mutex> lock(m_lock);
+        m_isActive = false;
+    }
+#if !DISABLE_REFERENCE_APP_UPDATE
+    stopDownloadMonitorThread();
+#endif
     unRegisterForAppEvents();
     unRegisterForPreinstallEvents();
 }
@@ -468,6 +620,7 @@ void SceneSetApp::run() {
                   "STATUS=ComRPC client is Successfully Initialized\n"
                   "MAINPID=%lu",
                (unsigned long)getpid());
+    std::cout << "SceneSetApp version: " << GIT_SHORT_SHA << std::endl;
     if (m_referenceAppId.empty()) {
         std::cout << "No reference app ID specified, skipping preinstall and app launch" << std::endl;
         return;
@@ -477,7 +630,7 @@ void SceneSetApp::run() {
 
     // Determine if this is a Factory Setting Reset (FSR) / first boot scenario
     bool isFactoryReset = !isFactoryAppsCopied();
-    
+
     // Copy factory apps to preinstall folder on first boot only
     if (isFactoryReset) {
         std::cout << "First boot/Factory reset detected. Copying factory apps to preinstall folder." << std::endl;
@@ -501,6 +654,11 @@ void SceneSetApp::run() {
     // Check if reference app is installed and launch it
     checkAndLaunchIfAlreadyInstalled();
 
+    // Start monitoring downloaded packages for reference app updates.
+#if !DISABLE_REFERENCE_APP_UPDATE
+    startDownloadMonitorThread();
+#endif
+
     waitForTermSignal();
 }
 
@@ -509,7 +667,7 @@ SceneSetApp::AppManagerEventHandler::~AppManagerEventHandler() {}
 
 void SceneSetApp::AppManagerEventHandler::OnAppInstalled(const string &appId, const string &version) {
     std::cout << "App Installed: " << appId << " Version: " << version << std::endl;
-    
+
     SceneSetApp& instance = SceneSetApp::getInstance();
     if (!instance.m_referenceAppId.empty() && appId == instance.m_referenceAppId) {
         if (instance.m_appLaunched) {
@@ -545,7 +703,7 @@ void SceneSetApp::AppManagerEventHandler::OnAppLifecycleStateChanged(const strin
             instance.m_appLaunched = true;
         } else if (newState == Exchange::IAppManager::AppLifecycleState::APP_STATE_UNLOADED) {
             instance.m_appLaunched = false;
-            
+
             // Check if we need to restart after new version installation
             if (instance.m_pendingRestart) {
                 std::cout << "App reached UNLOADED state after new version installation. Restarting with new version." << std::endl;
@@ -632,6 +790,475 @@ void SceneSetApp::startLaunchThread() {
     });
 }
 
+void SceneSetApp::startDownloadMonitorThread() {
+    if (m_downloadDirectory.empty()) {
+        std::cout << "downloadDir is not available. Download monitor is disabled." << std::endl;
+        return;
+    }
+
+    stopDownloadMonitorThread();
+    {
+        std::lock_guard<std::mutex> lock(m_downloadMonitorMutex);
+        m_stopDownloadMonitorThread = false;
+        m_downloadMonitorThread = std::make_unique<std::thread>([this]() {
+            monitorDownloadDirectory();
+        });
+    }
+}
+
+void SceneSetApp::stopDownloadMonitorThread() {
+    std::unique_ptr<std::thread> threadToJoin;
+    {
+        std::lock_guard<std::mutex> lock(m_downloadMonitorMutex);
+        m_stopDownloadMonitorThread = true;
+        if (m_downloadMonitorThread && m_downloadMonitorThread->joinable()) {
+            threadToJoin = std::move(m_downloadMonitorThread);
+        } else {
+            m_downloadMonitorThread.reset();
+        }
+    }
+    if (threadToJoin && threadToJoin->joinable()) {
+        threadToJoin->join();
+    }
+}
+
+void SceneSetApp::monitorDownloadDirectory() {
+    namespace fs = std::filesystem;
+
+    int inotifyFd = -1;
+    int watchFd = -1;
+    std::thread settleWorker;
+    std::mutex settleQueueMutex;
+    std::condition_variable settleQueueCv;
+    std::deque<std::pair<fs::path, std::chrono::steady_clock::time_point>> settleQueue;
+    bool stopSettleWorker = false;
+
+    try {
+        const fs::path downloadDir(m_downloadDirectory);
+        std::error_code ec;
+        const bool downloadDirExists = fs::exists(downloadDir, ec);
+        if (ec) {
+            std::cerr << "Download monitor disabled. Failed to validate downloadDir '" << m_downloadDirectory
+                      << "': " << ec.message() << std::endl;
+            return;
+        }
+
+        const bool downloadDirIsDirectory = fs::is_directory(downloadDir, ec);
+        if (ec) {
+            std::cerr << "Download monitor disabled. Failed to query downloadDir type '" << m_downloadDirectory
+                      << "': " << ec.message() << std::endl;
+            return;
+        }
+
+        if (!downloadDirExists || !downloadDirIsDirectory) {
+            std::cerr << "Download monitor disabled. Invalid downloadDir: " << m_downloadDirectory << std::endl;
+            return;
+        }
+
+        inotifyFd = WPEFramework::Core::inotify_init1(
+            WPEFramework::Core::IN_CLOEXEC | WPEFramework::Core::IN_NONBLOCK);
+        if (inotifyFd < 0) {
+            std::cerr << "inotify_init1 failed: " << strerror(errno) << std::endl;
+            return;
+        }
+
+        watchFd = WPEFramework::Core::inotify_add_watch(
+            inotifyFd,
+            m_downloadDirectory.c_str(),
+            IN_CLOSE_WRITE | IN_MOVED_TO);
+        if (watchFd < 0) {
+            std::cerr << "inotify_add_watch failed: " << strerror(errno) << std::endl;
+            close(inotifyFd);
+            inotifyFd = -1;
+            return;
+        }
+
+        std::cout << "Monitoring download directory for reference app packages: " << m_downloadDirectory << std::endl;
+
+        auto processCandidateFile = [this](const fs::path& packagePath) {
+            // Skip hidden files (those starting with a dot).
+            const std::string fileName = packagePath.filename().string();
+            if (!fileName.empty() && fileName[0] == '.') {
+                return;
+            }
+            if (!m_stopDownloadMonitorThread && isReadyDownloadedFile(packagePath)) {
+                if (!flushFileData(packagePath)) {
+                    std::cerr << "Warning: failed to flush downloaded file before verification: "
+                              << packagePath << " error=" << strerror(errno) << std::endl;
+                }
+                processDownloadedPackage(packagePath);
+            }
+        };
+
+        auto enqueueCandidate = [&settleQueueMutex, &settleQueueCv, &settleQueue](
+            const fs::path& packagePath,
+            const std::chrono::milliseconds settleDelay) {
+            const auto readyAt = std::chrono::steady_clock::now() + settleDelay;
+            {
+                std::lock_guard<std::mutex> lock(settleQueueMutex);
+                settleQueue.emplace_back(packagePath, readyAt);
+            }
+            settleQueueCv.notify_one();
+        };
+
+        settleWorker = std::thread([this, &processCandidateFile, &settleQueueMutex, &settleQueueCv, &settleQueue, &stopSettleWorker]() {
+            while (true) {
+                fs::path nextPath;
+                {
+                    std::unique_lock<std::mutex> lock(settleQueueMutex);
+                    settleQueueCv.wait(lock, [&]() {
+                        return stopSettleWorker || !settleQueue.empty();
+                    });
+
+                    if (stopSettleWorker) {
+                        break;
+                    }
+
+                    auto nextIt = settleQueue.begin();
+                    for (auto it = settleQueue.begin(); it != settleQueue.end(); ++it) {
+                        if (it->second < nextIt->second) {
+                            nextIt = it;
+                        }
+                    }
+
+                    const auto now = std::chrono::steady_clock::now();
+                    if (nextIt->second > now) {
+                        settleQueueCv.wait_until(lock, nextIt->second);
+                        continue;
+                    }
+
+                    nextPath = nextIt->first;
+                    settleQueue.erase(nextIt);
+                }
+
+                processCandidateFile(nextPath);
+            }
+        });
+
+        // Optionally perform an initial sweep of the download directory
+        // to catch any packages that were downloaded before this monitor started.
+        const bool isInitialSweepEnabled = shouldRunInitialDownloadSweep();
+        std::cout << "Initial download directory sweep is "
+                  << (isInitialSweepEnabled ? "enabled" : "disabled")
+                  << " (" << kInitialDownloadSweepEnvVar << ")" << std::endl;
+        if (isInitialSweepEnabled) {
+            std::error_code iterEc;
+            fs::directory_iterator it(downloadDir, fs::directory_options::skip_permission_denied, iterEc);
+            if (iterEc) {
+                std::cerr << "Initial sweep failed while opening download directory: "
+                          << iterEc.message() << std::endl;
+            }
+            fs::directory_iterator end;
+            for (; it != end; it.increment(iterEc)) {
+                if (iterEc) {
+                    std::cerr << "Initial sweep failed while scanning download directory: "
+                              << iterEc.message() << std::endl;
+                    break;
+                }
+
+                const auto& entry = *it;
+
+                std::error_code entryEc;
+                if (!entry.is_regular_file(entryEc) || entryEc) {
+                    continue;
+                }
+
+                // Skip hidden files (those starting with a dot).
+                const std::string fileName = entry.path().filename().string();
+                if (!fileName.empty() && fileName[0] == '.') {
+                    continue;
+                }
+
+                enqueueCandidate(entry.path(), std::chrono::milliseconds::zero());
+            }
+        }
+
+        // Start monitoring for new files in the download directory.
+        constexpr size_t EVENT_SIZE = sizeof(WPEFramework::Core::inotify_event);
+        constexpr size_t BUF_LEN = (EVENT_SIZE + NAME_MAX + 1) * 16;
+        alignas(WPEFramework::Core::inotify_event) char buf[BUF_LEN];
+
+        while (!m_stopDownloadMonitorThread) {
+            struct pollfd pfd = { inotifyFd, POLLIN, 0 };
+            const int ret = poll(&pfd, 1, 500);
+            if (ret < 0) {
+                if (errno == EINTR) continue;
+                std::cerr << "inotify poll failed: " << strerror(errno) << std::endl;
+                break;
+            }
+            if (ret == 0) continue; // timeout — check stop flag
+
+            const ssize_t len = read(inotifyFd, buf, sizeof(buf));
+            if (len < 0) {
+                if (errno == EINTR || errno == EAGAIN) {
+                    continue;
+                }
+                std::cerr << "inotify read failed: " << strerror(errno) << std::endl;
+                break;
+            }
+            if (len == 0) {
+                std::cerr << "inotify read returned EOF; stopping monitor thread" << std::endl;
+                break;
+            }
+
+            for (const char* ptr = buf; ptr < buf + len; ) {
+                const auto* event = reinterpret_cast<const WPEFramework::Core::inotify_event*>(ptr);
+                if (event->len > 0 && !(event->mask & IN_ISDIR)) {
+                    // Skip hidden files (those starting with a dot).
+                    if (event->name[0] != '.') {
+                        enqueueCandidate(downloadDir / event->name, kDownloadedPackageSettleDelayMs);
+                    }
+                }
+                ptr += EVENT_SIZE + event->len;
+            }
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "Unexpected exception in monitorDownloadDirectory: " << e.what() << std::endl;
+    } catch (...) {
+        std::cerr << "Unexpected non-standard exception in monitorDownloadDirectory" << std::endl;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(settleQueueMutex);
+        stopSettleWorker = true;
+    }
+    settleQueueCv.notify_all();
+    if (settleWorker.joinable()) {
+        settleWorker.join();
+    }
+
+    if (watchFd >= 0 && inotifyFd >= 0) {
+        WPEFramework::Core::inotify_rm_watch(inotifyFd, watchFd);
+    }
+    if (inotifyFd >= 0) {
+        close(inotifyFd);
+    }
+}
+
+bool SceneSetApp::shouldRunInitialDownloadSweep() const {
+    return isEnvFlagEnabled(kInitialDownloadSweepEnvVar, false);
+}
+
+#ifdef UNIT_TEST
+void SceneSetApp::setMetadataExtractorForTesting(bool (*extractor)(const std::filesystem::path&, std::string&, std::string&)) {
+    g_metadataExtractor = (extractor != nullptr) ? extractor : static_cast<MetadataExtractor>(&ralf_support::ExtractPackageMetadata);
+}
+
+void SceneSetApp::resetMetadataExtractorForTesting() {
+    g_metadataExtractor = static_cast<MetadataExtractor>(&ralf_support::ExtractPackageMetadata);
+}
+#endif
+
+bool SceneSetApp::processDownloadedPackage(const std::filesystem::path& packagePath) {
+    std::string packageAppId;
+    std::string packageVersion;
+
+    if (!g_metadataExtractor(packagePath, packageAppId, packageVersion)) {
+        std::cerr << "Failed to extract metadata from downloaded package: " << packagePath.filename() << std::endl;
+        return false;
+    }
+
+    if (packageAppId != m_referenceAppId) {
+        return false;
+    }
+
+    if (m_appLaunched.load()) {
+        const std::string installedVersion = getInstalledReferenceAppVersion();
+        if (!installedVersion.empty() && installedVersion == packageVersion) {
+            std::cout << "Reference app '" << packageAppId
+                      << "' is running with installed version " << installedVersion
+                      << "; skipping staging for downloaded package " << packagePath.filename() << std::endl;
+            return false;
+        }
+    }
+
+    return movePackageToPreinstallDirectory(packagePath);
+}
+
+bool SceneSetApp::movePackageToPreinstallDirectory(const std::filesystem::path& sourceFile) {
+    namespace fs = std::filesystem;
+    const fs::path preinstallDir(m_preinstallDirectory);
+
+    if (preinstallDir.empty()) {
+        std::cerr << "appPreinstallDirectory is not configured. Cannot stage package." << std::endl;
+        return false;
+    }
+
+    std::error_code ec;
+    if (!fs::exists(sourceFile, ec) || ec) {
+        std::cerr << "Source package disappeared before copy: " << sourceFile << std::endl;
+        return false;
+    }
+
+    const bool preinstallDirExists = fs::exists(preinstallDir, ec);
+    if (ec) {
+        std::cerr << "Failed to validate preinstall directory '" << preinstallDir << "': "
+                  << ec.message() << std::endl;
+        return false;
+    }
+
+    if (preinstallDirExists && !fs::is_directory(preinstallDir, ec)) {
+        if (ec) {
+            std::cerr << "Failed to query preinstall directory type '" << preinstallDir << "': "
+                      << ec.message() << std::endl;
+        } else {
+            std::cerr << "Configured appPreinstallDirectory is not a directory: " << preinstallDir << std::endl;
+        }
+        return false;
+    }
+
+    if (!preinstallDirExists) {
+        try {
+            fs::create_directories(preinstallDir);
+        } catch (const fs::filesystem_error& e) {
+            std::cerr << "Failed to create preinstall directory: " << e.what() << std::endl;
+            return false;
+        }
+    }
+
+    const fs::path destination = preinstallDir / sourceFile.filename();
+
+    try {
+        fs::rename(sourceFile, destination);
+        if (!flushFileData(destination)) {
+            std::cerr << "Warning: failed to flush staged package file: " << destination
+                      << " error=" << strerror(errno) << std::endl;
+        }
+        std::cout << "Moved downloaded reference package to preinstall: " << destination << std::endl;
+        return true;
+    } catch (const fs::filesystem_error& e) {
+        if (e.code() == std::errc::cross_device_link || e.code() == std::errc::file_exists) {
+            try {
+                std::error_code cleanupError;
+                fs::copy_file(sourceFile, destination, fs::copy_options::overwrite_existing);
+                fs::remove(sourceFile, cleanupError);
+                if (cleanupError) {
+                    std::cerr << "Copied package to preinstall but failed to remove source file: "
+                              << sourceFile << " error=" << cleanupError.message() << std::endl;
+                    return false;
+                }
+
+                if (!flushFileData(destination)) {
+                    std::cerr << "Warning: failed to flush staged package file: " << destination
+                              << " error=" << strerror(errno) << std::endl;
+                }
+                std::cout << "Copied downloaded package to preinstall (fallback path): "
+                          << destination << "; removed source file: " << sourceFile << std::endl;
+                return true;
+            } catch (const fs::filesystem_error& e2) {
+                std::cerr << "Failed copying package " << sourceFile << " to " << destination
+                          << " after rename fallback: " << e2.what() << std::endl;
+                return false;
+            }
+        }
+        std::cerr << "Failed moving package " << sourceFile << " to " << destination << ": " << e.what() << std::endl;
+        return false;
+    }
+}
+
+std::string SceneSetApp::getInstalledReferenceAppVersion() const {
+    if (m_referenceAppId.empty() || m_appManager == nullptr) {
+        return "";
+    }
+
+    std::string installedApps;
+    Core::hresult result = m_appManager->GetInstalledApps(installedApps);
+    if (result != Core::ERROR_NONE || installedApps.empty()) {
+        return "";
+    }
+
+    JsonArray apps;
+    if (!apps.FromString(installedApps)) {
+        return "";
+    }
+
+    JsonArray::Iterator index = apps.Elements();
+    while (index.Next()) {
+        const JsonValue& element = index.Current();
+        if (element.Content() != JsonValue::type::OBJECT) {
+            continue;
+        }
+
+        const JsonObject appObj = element.Object();
+        if (!appObj.HasLabel("appId") || appObj["appId"].String() != m_referenceAppId) {
+            continue;
+        }
+
+        if (appObj.HasLabel("version")) {
+            return appObj["version"].String();
+        }
+        if (appObj.HasLabel("versionString")) {
+            return appObj["versionString"].String();
+        }
+        return "";
+    }
+
+    return "";
+}
+
+bool SceneSetApp::fetchPluginConfigValue(const std::string& callsign, const std::string& configKey, std::string& value) const {
+    value.clear();
+
+    const std::string thunderAccessPath = getThunderAccessPath();
+    auto shellClient = Core::ProxyType<RPC::CommunicatorClient>::Create(Core::NodeId(thunderAccessPath.c_str()));
+    if (!shellClient.IsValid()) {
+        return false;
+    }
+
+    PluginHost::IShell* controllerShell = shellClient->Open<PluginHost::IShell>(_T("Controller"));
+    if (controllerShell == nullptr) {
+        controllerShell = shellClient->Open<PluginHost::IShell>(_T("Controller.1"));
+    }
+    if (controllerShell == nullptr) {
+        std::cerr << "Failed to open Controller shell for fetching config value" << std::endl;
+        return false;
+    }
+
+    PluginHost::IShell* targetShell = controllerShell->QueryInterfaceByCallsign<PluginHost::IShell>(callsign.c_str());
+    if (targetShell == nullptr) {
+        std::cerr << "Failed to open shell for callsign: " << callsign << std::endl;
+        controllerShell->Release();
+        return false;
+    }
+
+    JsonObject configuration;
+    const bool parsed = configuration.FromString(targetShell->ConfigLine());
+    if (!parsed || !configuration.HasLabel(configKey.c_str()) || configuration[configKey.c_str()].Content() != JsonValue::type::STRING) {
+        std::cerr << "Failed to parse configuration or config key not found or invalid type: " << configKey << std::endl;
+        targetShell->Release();
+        controllerShell->Release();
+        return false;
+    }
+
+    value = configuration[configKey.c_str()].String();
+    targetShell->Release();
+    controllerShell->Release();
+    return !value.empty();
+}
+
+std::string SceneSetApp::getThunderAccessPath() const {
+    const char* thunderAccess = std::getenv("THUNDER_ACCESS");
+    if (thunderAccess != nullptr && thunderAccess[0] != '\0') {
+        return thunderAccess;
+    }
+    return m_comrpcPath;
+}
+
+void SceneSetApp::resolveDynamicDirectories() {
+    std::string downloadDir;
+    std::string preinstallDir;
+
+    if (fetchPluginConfigValue(kPackageManagerRdkEmsCallsign, kPackageManagerDownloadDirKey, downloadDir)) {
+        m_downloadDirectory = downloadDir;
+        std::cout << "Updated downloadDir from PackageManagerRDKEMS plugin config: " << m_downloadDirectory << std::endl;
+    }
+
+    if (fetchPluginConfigValue(m_preinstallCallsign, kPreinstallDirectoryKey, preinstallDir)) {
+        m_preinstallDirectory = preinstallDir;
+        std::cout << "Updated appPreinstallDirectory from PreinstallManager plugin config: " << m_preinstallDirectory << std::endl;
+    }
+}
+
 SceneSetApp::PreinstallManagerEventHandler::~PreinstallManagerEventHandler() {}
 
 void SceneSetApp::PreinstallManagerEventHandler::OnAppInstallationStatus(const string &jsonresponse) {
@@ -660,28 +1287,28 @@ void SceneSetApp::PreinstallManagerEventHandler::OnAppInstallationStatus(const s
             std::string packageId;
             std::string state;
             std::string version;
-            
+
             if (packageObj.HasLabel("packageId")) {
                 const JsonValue& pkgIdValue = packageObj["packageId"];
                 if (pkgIdValue.Content() == JsonValue::type::STRING) {
                     packageId = pkgIdValue.String();
                 }
             }
-            
+
             if (packageObj.HasLabel("state")) {
                 const JsonValue& stateValue = packageObj["state"];
                 if (stateValue.Content() == JsonValue::type::STRING) {
                     state = stateValue.String();
                 }
             }
-            
+
             if (packageObj.HasLabel("version")) {
                 const JsonValue& versionValue = packageObj["version"];
                 if (versionValue.Content() == JsonValue::type::STRING) {
                     version = versionValue.String();
                 }
             }
-            
+
             std::cout << "Package: " << packageId << ", Version: " << version << ", State: " << state << std::endl;
         }
     }
