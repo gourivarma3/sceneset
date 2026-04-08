@@ -134,7 +134,6 @@ jobs:
           repository: rdkcentral/entservices-testframework
           path: entservices-testframework
           ref: 1.0.1
-          token: ${{ secrets.RDKCM_RDKE }}
 
       - name: Checkout SceneSet repository
         uses: actions/checkout@v3
