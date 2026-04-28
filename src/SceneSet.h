@@ -35,6 +35,7 @@
 
 #include <WPEFramework/com/com.h>
 #include <WPEFramework/core/core.h>
+#include "WPEFramework/interfaces/IAppPackageManager.h"
 #include "WPEFramework/interfaces/IAppManager.h"
 #include "WPEFramework/interfaces/IPreinstallManager.h"
 
@@ -53,8 +54,11 @@ public:
     bool initialize();
     bool registerForAppEvents();
     bool registerForPreinstallEvents();
+    bool registerForPackageInstallerEvents();
     bool unRegisterForAppEvents();
     bool unRegisterForPreinstallEvents();
+    bool unRegisterForPackageInstallerEvents();
+    void releaseComInterfaces();
     bool launchDefaultApp();
     bool killReferenceApp();
     bool startPreinstall(bool forceInstall);
@@ -79,8 +83,10 @@ private:
     std::mutex m_lock;
     Exchange::IAppManager *m_appManager;
     Exchange::IPreinstallManager *m_preinstallManager;
+    Exchange::IPackageInstaller *m_packageInstaller;
     std::shared_ptr<WPEFramework::Exchange::IAppManager::INotification> m_appManagerEventHandler;
     std::shared_ptr<WPEFramework::Exchange::IPreinstallManager::INotification> m_preinstallManagerEventHandler;
+    std::shared_ptr<WPEFramework::Exchange::IPackageInstaller::INotification> m_packageInstallerEventHandler;
     std::string m_appmgrCallsign, m_preinstallCallsign;
     const std::string m_referenceAppId;
     std::string m_comrpcPath;
@@ -95,11 +101,21 @@ private:
     std::unique_ptr<std::thread> m_downloadMonitorThread;
     std::atomic<bool> m_stopDownloadMonitorThread;
     std::mutex m_downloadMonitorMutex;
+    std::unique_ptr<std::thread> m_preinstallCompletionThread;
+    std::mutex m_preinstallCompletionThreadMutex;
+    std::atomic<bool> m_waitingForStartupPreinstallCompletion;
+    std::atomic<bool> m_startupPreinstallHasFailure;
 
     void stopCurrentLaunchThread();
     void startLaunchThread();
     void startDownloadMonitorThread();
     void stopDownloadMonitorThread();
+    void startPreinstallCompletionThread();
+    void stopPreinstallCompletionThread();
+    void completeStartupAfterPreinstall();
+    void resetStartupPreinstallStatusTracking();
+    void recordStartupPreinstallStatus(const std::string& jsonresponse);
+    bool isStartupPreinstallSucceed() const;
     void monitorDownloadDirectory();
     bool shouldRunInitialDownloadSweep() const;
     bool processDownloadedPackage(const std::filesystem::path& packagePath);
@@ -133,10 +149,22 @@ private:
     public:
         ~PreinstallManagerEventHandler();
         void OnAppInstallationStatus(const string &jsonresponse) override;
+        void OnPreinstallationComplete() override;
         uint32_t AddRef() const override;
         uint32_t Release() const override;
         BEGIN_INTERFACE_MAP(PreinstallManagerEventHandler)
         INTERFACE_ENTRY(Exchange::IPreinstallManager::INotification)
+        END_INTERFACE_MAP
+    };
+
+    class PackageInstallerEventHandler : public Exchange::IPackageInstaller::INotification {
+    public:
+        ~PackageInstallerEventHandler();
+        void OnAppInstallationStatus(const string &jsonresponse) override;
+        uint32_t AddRef() const override;
+        uint32_t Release() const override;
+        BEGIN_INTERFACE_MAP(PackageInstallerEventHandler)
+        INTERFACE_ENTRY(Exchange::IPackageInstaller::INotification)
         END_INTERFACE_MAP
     };
 };

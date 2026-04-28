@@ -62,6 +62,8 @@ constexpr const char* kPackageManagerRdkEmsCallsign = "org.rdk.PackageManagerRDK
 constexpr const char* kPackageManagerDownloadDirKey = "downloadDir";
 constexpr const char* kPreinstallDirectoryKey = "appPreinstallDirectory";
 constexpr const char* kInitialDownloadSweepEnvVar = "SCENESET_INITIAL_DOWNLOAD_SWEEP";
+constexpr const char* kPackageInstallStateInstalled = "INSTALLED";
+constexpr const char* kPackageInstallStateInstalling = "INSTALLING";
 constexpr std::chrono::milliseconds kDownloadedPackageSettleDelayMs(1000);
 
 using MetadataExtractor = bool (*)(const std::filesystem::path&, std::string&, std::string&);
@@ -155,16 +157,19 @@ static std::string getDefaultAppName() {
 }
 
 SceneSetApp::SceneSetApp()
-    : m_isActive(false), m_lock(), m_appManager(nullptr), m_preinstallManager(nullptr), m_appManagerEventHandler(nullptr), m_preinstallManagerEventHandler(nullptr), m_appmgrCallsign("org.rdk.AppManager"), m_preinstallCallsign("org.rdk.PreinstallManager"), m_referenceAppId(getDefaultAppName()), m_comrpcPath("/tmp/communicator"), m_downloadDirectory(""), m_preinstallDirectory(APP_PREINSTALL_DIRECTORY), m_launchThread(nullptr), m_stopLaunchThread(false), m_appLaunched(false), m_pendingRestart(false), m_launchThreadMutex(), m_downloadMonitorThread(nullptr), m_stopDownloadMonitorThread(false), m_downloadMonitorMutex() {
+    : m_isActive(false), m_lock(), m_appManager(nullptr), m_preinstallManager(nullptr), m_packageInstaller(nullptr), m_appManagerEventHandler(nullptr), m_preinstallManagerEventHandler(nullptr), m_packageInstallerEventHandler(nullptr), m_appmgrCallsign("org.rdk.AppManager"), m_preinstallCallsign("org.rdk.PreinstallManager"), m_referenceAppId(getDefaultAppName()), m_comrpcPath("/tmp/communicator"), m_downloadDirectory(""), m_preinstallDirectory(APP_PREINSTALL_DIRECTORY), m_launchThread(nullptr), m_stopLaunchThread(false), m_appLaunched(false), m_pendingRestart(false), m_launchThreadMutex(), m_downloadMonitorThread(nullptr), m_stopDownloadMonitorThread(false), m_downloadMonitorMutex(), m_preinstallCompletionThread(nullptr), m_preinstallCompletionThreadMutex(), m_waitingForStartupPreinstallCompletion(false), m_startupPreinstallHasFailure(false) {
 }
 
 SceneSetApp::~SceneSetApp() {
 #if !DISABLE_REFERENCE_APP_UPDATE
     stopDownloadMonitorThread();
 #endif
+    stopPreinstallCompletionThread();
     stopCurrentLaunchThread();
     unRegisterForAppEvents();
     unRegisterForPreinstallEvents();
+    unRegisterForPackageInstallerEvents();
+    releaseComInterfaces();
 }
 
 bool SceneSetApp::initialize() {
@@ -243,6 +248,41 @@ bool SceneSetApp::initialize() {
 
     std::cout << "Successfully opened " << m_preinstallCallsign << " interface" << std::endl;
 
+    auto packageManagerClient = Core::ProxyType<RPC::CommunicatorClient>::Create(
+        Core::NodeId(envThunderAccess.c_str()));
+
+    if (!packageManagerClient.IsValid()) {
+        std::cerr << "Failed to create COMRPC client for PackageManager." << std::endl;
+        if (m_preinstallManager != nullptr) {
+            m_preinstallManager->Release();
+            m_preinstallManager = nullptr;
+        }
+        if (m_appManager != nullptr) {
+            m_appManager->Release();
+            m_appManager = nullptr;
+        }
+        restoreMaskOnExit();
+        return false;
+    }
+
+    std::cout << "PackageManager COMRPC client created successfully" << std::endl;
+    m_packageInstaller = packageManagerClient->Open<Exchange::IPackageInstaller>(kPackageManagerRdkEmsCallsign);
+    if (m_packageInstaller == nullptr) {
+        std::cerr << "Failed to open IPackageInstaller interface for " << kPackageManagerRdkEmsCallsign << std::endl;
+        if (m_preinstallManager != nullptr) {
+            m_preinstallManager->Release();
+            m_preinstallManager = nullptr;
+        }
+        if (m_appManager != nullptr) {
+            m_appManager->Release();
+            m_appManager = nullptr;
+        }
+        restoreMaskOnExit();
+        return false;
+    }
+
+    std::cout << "Successfully opened " << kPackageManagerRdkEmsCallsign << " installer interface" << std::endl;
+
     resolveDynamicDirectories();
     if (m_preinstallDirectory.empty()) {
         // Fall back to compile-time default if dynamic lookup did not yield a value.
@@ -253,6 +293,10 @@ bool SceneSetApp::initialize() {
         if (m_preinstallManager != nullptr) {
             m_preinstallManager->Release();
             m_preinstallManager = nullptr;
+        }
+        if (m_packageInstaller != nullptr) {
+            m_packageInstaller->Release();
+            m_packageInstaller = nullptr;
         }
         if (m_appManager != nullptr) {
             m_appManager->Release();
@@ -296,6 +340,17 @@ bool SceneSetApp::registerForPreinstallEvents() {
     return false;
 }
 
+bool SceneSetApp::registerForPackageInstallerEvents() {
+    if (nullptr == m_packageInstallerEventHandler) {
+        m_packageInstallerEventHandler = std::make_shared<PackageInstallerEventHandler>();
+    }
+    if (m_packageInstaller != nullptr) {
+        m_packageInstaller->Register(m_packageInstallerEventHandler.get());
+        return true;
+    }
+    return false;
+}
+
 bool SceneSetApp::unRegisterForAppEvents() {
     std::cout << " Unregistering for AppManager Events " << endl;
     if (nullptr != m_appManagerEventHandler && nullptr != m_appManager) {
@@ -325,6 +380,22 @@ bool SceneSetApp::unRegisterForPreinstallEvents() {
         std::cout << "PreinstallManager or EventHandler is null, cannot unregister" << endl;
     }
     m_preinstallManagerEventHandler = nullptr;
+    return true;
+}
+
+bool SceneSetApp::unRegisterForPackageInstallerEvents() {
+    std::cout << " Unregistering for PackageInstaller Events " << endl;
+    if (nullptr != m_packageInstallerEventHandler && nullptr != m_packageInstaller) {
+        try {
+            m_packageInstaller->Unregister(m_packageInstallerEventHandler.get());
+            std::cout << " Unregistered PackageInstaller Events " << endl;
+        } catch (...) {
+            std::cerr << "Exception during PackageInstaller unregister" << endl;
+        }
+    } else {
+        std::cout << "PackageInstaller or EventHandler is null, cannot unregister" << endl;
+    }
+    m_packageInstallerEventHandler = nullptr;
     return true;
 }
 
@@ -384,42 +455,17 @@ bool SceneSetApp::isReferenceAppInstalled() {
         return false;
     }
 
-    std::string installedApps;
-    Core::hresult result = m_appManager->GetInstalledApps(installedApps);
-
+    bool isInstalled = false;
+    Core::hresult result = m_appManager->IsInstalled(m_referenceAppId, isInstalled);
     if (result != Core::ERROR_NONE) {
-        std::cerr << "GetInstalledApps failed with error code: " << result << std::endl;
+        std::cerr << "IsInstalled failed for reference app '" << m_referenceAppId
+                  << "' with error code: " << result << std::endl;
         return false;
     }
 
-    std::cout << "Installed apps: " << installedApps << std::endl;
-
-    // Parse JSON array
-    JsonArray apps;
-    if (!apps.FromString(installedApps)) {
-        std::cerr << "Failed to parse installed apps JSON response" << std::endl;
-        return false;
-    }
-
-    // Iterate through the array to find reference app
-    JsonArray::Iterator index = apps.Elements();
-    while (index.Next()) {
-        const JsonValue& element = index.Current();
-
-        if (element.Content() == JsonValue::type::OBJECT) {
-            JsonObject appObj = element.Object();
-
-            if (appObj.HasLabel("appId")) {
-                const JsonValue& appIdValue = appObj["appId"];
-                if (appIdValue.Content() == JsonValue::type::STRING) {
-                    std::string appId = appIdValue.String();
-                    if (appId == m_referenceAppId) {
-                        std::cout << "Reference app '" << m_referenceAppId << "' is already installed" << std::endl;
-                        return true;
-                    }
-                }
-            }
-        }
+    if (isInstalled) {
+        std::cout << "Reference app '" << m_referenceAppId << "' is already installed" << std::endl;
+        return true;
     }
 
     std::cout << "Reference app '" << m_referenceAppId << "' is not installed yet" << std::endl;
@@ -558,6 +604,106 @@ void SceneSetApp::cleanupPreinstallFolder() {
     }
 }
 
+void SceneSetApp::completeStartupAfterPreinstall() {
+    bool expected = true;
+    if (!m_waitingForStartupPreinstallCompletion.compare_exchange_strong(expected, false)) {
+        return;
+    }
+
+    if (!m_isActive.load()) {
+        std::cout << "Preinstall phase finished after shutdown started. Skipping remaining startup work." << std::endl;
+        return;
+    }
+
+    std::cout << "Preinstall phase finished. Continuing startup flow." << std::endl;
+    if (isStartupPreinstallSucceed()) {
+        cleanupPreinstallFolder();
+    } else {
+        std::cerr << "Startup preinstall reported a failure state before completion. Preserving files in preinstall folder for retry." << std::endl;
+    }
+    checkAndLaunchIfAlreadyInstalled();
+
+#if !DISABLE_REFERENCE_APP_UPDATE
+    startDownloadMonitorThread();
+#endif
+}
+
+void SceneSetApp::resetStartupPreinstallStatusTracking() {
+    m_startupPreinstallHasFailure = false;
+}
+
+void SceneSetApp::recordStartupPreinstallStatus(const std::string& jsonresponse) {
+    if (jsonresponse.empty()) {
+        return;
+    }
+
+    JsonArray packages;
+    if (!packages.FromString(jsonresponse)) {
+        std::cerr << "Failed to parse preinstall status JSON response" << std::endl;
+        return;
+    }
+
+    JsonArray::Iterator index = packages.Elements();
+    while (index.Next()) {
+        const JsonValue& element = index.Current();
+        if (element.Content() != JsonValue::type::OBJECT) {
+            continue;
+        }
+
+        const JsonObject packageObj = element.Object();
+        std::string packageId;
+        std::string state;
+        std::string version;
+
+        if (packageObj.HasLabel("packageId")) {
+            const JsonValue& packageIdValue = packageObj["packageId"];
+            if (packageIdValue.Content() == JsonValue::type::STRING) {
+                packageId = packageIdValue.String();
+            }
+        }
+
+        if (packageObj.HasLabel("state")) {
+            const JsonValue& stateValue = packageObj["state"];
+            if (stateValue.Content() == JsonValue::type::STRING) {
+                state = stateValue.String();
+            }
+        }
+
+        if (packageObj.HasLabel("version")) {
+            const JsonValue& versionValue = packageObj["version"];
+            if (versionValue.Content() == JsonValue::type::STRING) {
+                version = versionValue.String();
+            }
+        }
+
+        std::cout << "Package: " << packageId << ", Version: " << version << ", State: " << state << std::endl;
+
+        if (packageId.empty() || state.empty()) {
+            continue;
+        }
+
+        std::string packageKey = packageId;
+        if (!version.empty()) {
+            packageKey += ":";
+            packageKey += version;
+        }
+
+        if (state != kPackageInstallStateInstalled && state != kPackageInstallStateInstalling) {
+            std::cerr << "Preinstall package '" << packageKey
+                      << "' reported unexpected state '" << state << "'; marking preinstall as failed." << std::endl;
+            m_startupPreinstallHasFailure = true;
+        }
+    }
+}
+
+bool SceneSetApp::isStartupPreinstallSucceed() const {
+    if (m_startupPreinstallHasFailure) {
+        std::cerr << "One or more preinstall packages reported a failure state." << std::endl;
+        return false;
+    }
+    return true;
+}
+
 void SceneSetApp::checkAndLaunchIfAlreadyInstalled() {
     if (!m_appLaunched) {
         std::cout << "Checking if reference app is installed" << std::endl;
@@ -597,16 +743,38 @@ void SceneSetApp::handleTerminationSignal(int signal) {
     SceneSetApp::getInstance().onTerminate();
 }
 
+void SceneSetApp::releaseComInterfaces() {
+    if (m_packageInstaller != nullptr) {
+        m_packageInstaller->Release();
+        m_packageInstaller = nullptr;
+    }
+    if (m_preinstallManager != nullptr) {
+        m_preinstallManager->Release();
+        m_preinstallManager = nullptr;
+    }
+    if (m_appManager != nullptr) {
+        m_appManager->Release();
+        m_appManager = nullptr;
+    }
+}
+
 void SceneSetApp::onTerminate() {
     {
         std::lock_guard<std::mutex> lock(m_lock);
         m_isActive = false;
     }
+    stopPreinstallCompletionThread();
 #if !DISABLE_REFERENCE_APP_UPDATE
     stopDownloadMonitorThread();
 #endif
+    if (m_appLaunched.load()) {
+        std::cout << "Stopping reference app on service shutdown." << std::endl;
+        killReferenceApp();
+    }
     unRegisterForAppEvents();
     unRegisterForPreinstallEvents();
+    unRegisterForPackageInstallerEvents();
+    releaseComInterfaces();
 }
 
 SceneSetApp& SceneSetApp::getInstance() {
@@ -625,8 +793,20 @@ void SceneSetApp::run() {
         std::cout << "No reference app ID specified, skipping preinstall and app launch" << std::endl;
         return;
     }
-    registerForPreinstallEvents();
-    registerForAppEvents();
+    const bool preinstallEventsRegistered = registerForPreinstallEvents();
+    if (!preinstallEventsRegistered) {
+        std::cerr << "Failed to register for PreinstallManager completion events" << std::endl;
+    }
+
+    const bool packageInstallerEventsRegistered = registerForPackageInstallerEvents();
+    if (!packageInstallerEventsRegistered) {
+        std::cerr << "Failed to register for PackageManager installation status events" << std::endl;
+    }
+    
+    const bool appManagerEventsRegistered = registerForAppEvents();
+    if (!appManagerEventsRegistered) {
+        std::cerr << "Failed to register for AppManager events" << std::endl;
+    }
 
     // Determine if this is a Factory Setting Reset (FSR) / first boot scenario
     bool isFactoryReset = !isFactoryAppsCopied();
@@ -641,23 +821,26 @@ void SceneSetApp::run() {
         std::cout << "Factory apps already copied on first boot. Skipping copy." << std::endl;
     }
 
-    // Start preinstall - this is SYNCHRONOUS and BLOCKS until all bundles are installed
+    // Start preinstall asynchronously.
     // Use forceInstall=true for FSR cases (force reinstall all packages)
     // Use forceInstall=false for normal boots (only install if newer version)
-    std::cout << "Starting preinstall process" << std::endl;
-    if (startPreinstall(isFactoryReset)) {
-        std::cout << "Preinstall process completed. Proceeding with cleaning up preinstall folder" << std::endl;
-        // Clean up preinstall folder after preinstall succeeds
-        cleanupPreinstallFolder();
+    resetStartupPreinstallStatusTracking();
+    m_waitingForStartupPreinstallCompletion = true;
+    std::cout << "Starting preinstall process and waiting for OnPreinstallationComplete" << std::endl;
+    if (!startPreinstall(isFactoryReset)) {
+        std::cerr << "Failed to start preinstall process. Continuing startup flow without deleting preinstall files." << std::endl;
+        completeStartupAfterPreinstall();
+    } else {
+        if (!preinstallEventsRegistered) {
+            std::cerr << "Preinstall started asynchronously without a registered completion handler; startup post-actions depend on PreinstallManager notification delivery." << std::endl;
+        }
+        if (!packageInstallerEventsRegistered) {
+            std::cerr << "Preinstall started without a registered PackageManager status handler; preinstall files will be preserved because install success cannot be confirmed." << std::endl;
+        }
+        if (!appManagerEventsRegistered) {
+            std::cerr << "Preinstall started without a registered AppManager status handler" << std::endl;
+        }
     }
-
-    // Check if reference app is installed and launch it
-    checkAndLaunchIfAlreadyInstalled();
-
-    // Start monitoring downloaded packages for reference app updates.
-#if !DISABLE_REFERENCE_APP_UPDATE
-    startDownloadMonitorThread();
-#endif
 
     waitForTermSignal();
 }
@@ -803,6 +986,39 @@ void SceneSetApp::startDownloadMonitorThread() {
         m_downloadMonitorThread = std::make_unique<std::thread>([this]() {
             monitorDownloadDirectory();
         });
+    }
+}
+
+void SceneSetApp::startPreinstallCompletionThread() {
+    std::cout << "Starting Preinstall Completion Thread" << std::endl;
+
+    if (!m_isActive.load()) {
+        std::cout << "Skipping preinstall completion worker start because shutdown is already in progress." << std::endl;
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(m_preinstallCompletionThreadMutex);
+    if (m_preinstallCompletionThread && m_preinstallCompletionThread->joinable()) {
+        std::cout << "Preinstall completion thread already running, skipping duplicate start." << std::endl;
+        return;
+    }
+    m_preinstallCompletionThread = std::make_unique<std::thread>([this]() {
+        completeStartupAfterPreinstall();
+    });
+}
+
+void SceneSetApp::stopPreinstallCompletionThread() {
+    std::unique_ptr<std::thread> threadToJoin;
+    {
+        std::lock_guard<std::mutex> lock(m_preinstallCompletionThreadMutex);
+        if (m_preinstallCompletionThread && m_preinstallCompletionThread->joinable()) {
+            threadToJoin = std::move(m_preinstallCompletionThread);
+        } else {
+            m_preinstallCompletionThread.reset();
+        }
+    }
+    if (threadToJoin && threadToJoin->joinable()) {
+        threadToJoin->join();
     }
 }
 
@@ -1262,55 +1478,22 @@ void SceneSetApp::resolveDynamicDirectories() {
 SceneSetApp::PreinstallManagerEventHandler::~PreinstallManagerEventHandler() {}
 
 void SceneSetApp::PreinstallManagerEventHandler::OnAppInstallationStatus(const string &jsonresponse) {
-    std::cout << "OnAppInstallationStatus: " << jsonresponse << std::endl;
+    std::cout << "PreinstallManager OnAppInstallationStatus callback: " << jsonresponse << std::endl;
+}
 
-    if (jsonresponse.empty()) {
-        return;
-    }
+void SceneSetApp::PreinstallManagerEventHandler::OnPreinstallationComplete() {
+    std::cout << "OnPreinstallationComplete received" << std::endl;
+    SceneSetApp::getInstance().startPreinstallCompletionThread();
+}
 
-    // Note: startPreinstall() is SYNCHRONOUS and blocks until all installations complete.
-    // This handler is kept for logging and monitoring purposes .
+SceneSetApp::PackageInstallerEventHandler::~PackageInstallerEventHandler() {}
 
-    // Parse JSON array
-    JsonArray packages;
-    if (!packages.FromString(jsonresponse)) {
-        std::cerr << "Failed to parse JSON response" << std::endl;
-        return;
-    }
+void SceneSetApp::PackageInstallerEventHandler::OnAppInstallationStatus(const string &jsonresponse) {
+    std::cout << "PackageManager OnAppInstallationStatus: " << jsonresponse << std::endl;
 
-    // Iterate through the array and log installation status
-    JsonArray::Iterator index = packages.Elements();
-    while (index.Next()) {
-        const JsonValue& element = index.Current();
-        if (element.Content() == JsonValue::type::OBJECT) {
-            JsonObject packageObj = element.Object();
-            std::string packageId;
-            std::string state;
-            std::string version;
-
-            if (packageObj.HasLabel("packageId")) {
-                const JsonValue& pkgIdValue = packageObj["packageId"];
-                if (pkgIdValue.Content() == JsonValue::type::STRING) {
-                    packageId = pkgIdValue.String();
-                }
-            }
-
-            if (packageObj.HasLabel("state")) {
-                const JsonValue& stateValue = packageObj["state"];
-                if (stateValue.Content() == JsonValue::type::STRING) {
-                    state = stateValue.String();
-                }
-            }
-
-            if (packageObj.HasLabel("version")) {
-                const JsonValue& versionValue = packageObj["version"];
-                if (versionValue.Content() == JsonValue::type::STRING) {
-                    version = versionValue.String();
-                }
-            }
-
-            std::cout << "Package: " << packageId << ", Version: " << version << ", State: " << state << std::endl;
-        }
+    SceneSetApp& instance = SceneSetApp::getInstance();
+    if (instance.m_waitingForStartupPreinstallCompletion.load()) {
+        instance.recordStartupPreinstallStatus(jsonresponse);
     }
 }
 
@@ -1319,5 +1502,13 @@ uint32_t SceneSetApp::PreinstallManagerEventHandler::AddRef() const {
 }
 
 uint32_t SceneSetApp::PreinstallManagerEventHandler::Release() const {
+    return Core::ERROR_NONE;
+}
+
+uint32_t SceneSetApp::PackageInstallerEventHandler::AddRef() const {
+    return Core::ERROR_NONE;
+}
+
+uint32_t SceneSetApp::PackageInstallerEventHandler::Release() const {
     return Core::ERROR_NONE;
 }
