@@ -1,51 +1,97 @@
 # SceneSet
 
-SceneSet is an application launcher service for RDK based Set-Top Boxes that automatically launches the rdk refernce application during system boot up. It provides a reliable mechanism to start reference application using the WPEFramework AppManager interface.
+SceneSet is an application launcher service for RDK based Set-Top Boxes that automatically launches the RDK reference application during system boot up. It provides a reliable mechanism to start the reference application using the WPEFramework AppManager interface, manage preinstallation of app bundles, and monitor for over-the-air reference app updates.
 
 ## Overview
 
 SceneSet is designed to run as a systemd service that:
-- Initializes communication with the Thunder/WPEFramework
+- Initializes communication with Thunder/WPEFramework
 - Registers for reference application lifecycle events via AppManager
 - Automatically launches a specified reference application
+- Manages app bundle preinstallation via PreinstallManager, including first-boot factory app copying
+- Monitors a download directory for new reference app packages and triggers over-the-air updates
+- Restarts the reference app when a new version is installed
 - Monitors reference application state changes and restarts the app if it crashes
 - Handles graceful shutdown via signal handling
 
 ## Features
 
-- **Automatic App Launch**: Launches the rdk reference application specified via environment variable
-- **Event Monitoring**: Registers for and logs AppManager lifecycle events
-- **Signal Handling**: Graceful shutdown on SIGTERM signals
-- **Thunder Integration**: Uses WPEFramework COMRPC for AppManager communication
+- **Automatic App Launch**: Launches the RDK reference application specified via environment variable or config file
+- **PreinstallManager Integration**: Triggers app bundle preinstallation at boot and waits for completion before launching the reference app
+- **Factory Settings Reset (FSR) Support**: Detects first boot via a marker file and copies factory app bundles to the preinstall directory using force-install mode; subsequent boots use normal (version-aware) install mode
+- **Over-the-Air Update Monitoring**: Watches a configured download directory for new RALF packages using inotify; verifies them with libralf and stages them for installation via PreinstallManager
+- **Reference App Update & Restart**: Detects when a new version of the reference app is installed and automatically kills and restarts it
+- **PackageInstaller Event Monitoring**: Tracks per-package installation status from `org.rdk.PackageManagerRDKEMS` to confirm successful preinstall before cleaning up staged bundles
+- **Crash Recovery**: Automatically restarts the reference app on an ABORT lifecycle error
+- **Signal Handling**: Graceful shutdown on SIGTERM/SIGINT signals
+- **Systemd Integration**: Reports readiness via `sd_notify` and runs as a `Type=notify` systemd service
+- **Thunder Integration**: Uses WPEFramework COMRPC for AppManager, PreinstallManager, and PackageManagerRDKEMS communication
 
 ## Configuration
 
 ### Environment Variables
 
-- **`SCENESET_DEFAULT_APPNAME`**: Specifies the application to launch at startup
+- **`SCENESET_DEFAULT_APPNAME`**: Specifies the application to launch at startup (can also be overridden via the runtime config file; see below)
 
 - **`THUNDER_ACCESS`**: Optional path to Thunder communicator socket
   - Default: `/tmp/communicator`
 
-- **`SCENESET_INITIAL_DOWNLOAD_SWEEP`**: Process packages already in the download directory at monitor startup
-  - Default: `0` (disabled). Set to `1`/`true`/`yes`/`on` to enable, `0`/`false`/`no`/`off` to disable
+- **`SCENESET_INITIAL_DOWNLOAD_SWEEP`**: Process packages already present in the download directory at monitor startup
+  - Default: `0` (disabled). Set to `1` to enable, `0` to disable
+
+### Runtime Configuration File
+
+- **`/opt/sceneset_app.conf`**: Optional plain-text file whose first line overrides `SCENESET_DEFAULT_APPNAME` at runtime. Useful for changing the launched app without rebuilding.
 
 ## Build Instructions
 
-The project uses CMake for building
+The project uses CMake for building.
 
 ### Dependencies
 
-- **WPEFramework**: Core framework and interfaces
+- **WPEFramework**: Core framework and interfaces (AppManager, PreinstallManager, PackageManagerRDKEMS)
+- **libralf**: RALF package verification and metadata extraction
+- **libsystemd**: systemd integration (`sd_notify`)
 - **gtest/gmock**: For unit testing
+
+### CMake Build Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `SCENESET_DEFAULT_APPNAME` | `com.rdkcentral.refui` | Default application ID to launch |
+| `FACTORY_APP_PATH` | `/etc/rdk/factoryapps` | Path to factory app bundles copied on first boot |
+| `APP_PREINSTALL_DIRECTORY` | `/media/apps` | Fallback preinstall directory (also resolved dynamically from PackageManagerRDKEMS config) |
+| `DAC_APP_CERT_PATH` | `/etc/rdk/certs` | Directory containing DAC certificates for RALF package verification |
+| `DISABLE_REFERENCE_APP_UPDATE` | `OFF` | Set to `ON` to disable download monitoring and OTA update support |
+
+> **Note:** If `FACTORY_APP_PATH` is set, `APP_PREINSTALL_DIRECTORY` must also be set.
+
+## Startup Flow
+
+1. Connects to AppManager, PreinstallManager, and PackageManagerRDKEMS via COMRPC
+2. Registers for events from all three interfaces
+3. Detects first boot (FSR) by checking for marker file `/opt/persistent/.sceneset_factory_apps_copied`
+4. On first boot: copies factory app bundles from `FACTORY_APP_PATH` to the preinstall directory
+5. Starts preinstall (force mode on FSR, normal mode on subsequent boots) and waits for `OnPreinstallationComplete`
+6. If preinstall succeeds, cleans up the preinstall directory; otherwise preserves files for retry on next boot
+7. Checks if the reference app is already installed and launches it
+8. Unless `DISABLE_REFERENCE_APP_UPDATE=ON`, starts a download directory monitor for OTA updates
 
 ## Service Dependencies
 
-SceneSet depends on the AppManager service:
-- **Requires**: `wpeframework-appmanager.service`
-- **After**: `wpeframework-appmanager.service`
+SceneSet connects to the following WPEFramework plugins at runtime:
+- **`org.rdk.AppManager`** — app lifecycle management and launch
+- **`org.rdk.PreinstallManager`** — bundle preinstallation and completion notification
+- **`org.rdk.PackageManagerRDKEMS`** — per-package installation status events and download directory configuration
 
-Ensure AppManager is running before starting SceneSet.
+The systemd service unit requires:
+- **Requires/After**: `wpeframework-appmanager.service`
+- **ConditionPathExists**: `/opt/ai2managers`
+
+## Unit Tests
+
+L1 unit tests are located in `Tests/L1Tests/` and use gtest/gmock alongside libralf. The test executable is `SceneSetL1TestsIN`.
+
 
 ## License
 
