@@ -16,7 +16,7 @@ SceneSet is designed to run as a systemd service that:
 
 ## Features
 
-- **Automatic App Launch**: Launches the RDK reference application specified via environment variable or config file
+- **Automatic App Launch**: Launches the RDK reference application specified by the compile-time `SCENESET_DEFAULT_APPNAME` setting, with optional runtime override via `/opt/sceneset_app.conf`
 - **PreinstallManager Integration**: Triggers app bundle preinstallation at boot and waits for completion before launching the reference app
 - **Factory Settings Reset (FSR) Support**: Detects first boot via a marker file and copies factory app bundles to the preinstall directory using force-install mode; subsequent boots use normal (version-aware) install mode
 - **Over-the-Air Update Monitoring**: Watches a configured download directory for new RALF packages using inotify; verifies them with libralf and stages them for installation via PreinstallManager
