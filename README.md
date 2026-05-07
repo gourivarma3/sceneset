@@ -59,7 +59,7 @@ The project uses CMake for building.
 ### CMake Build Variables
 
 | Variable | Default | Description |
-|---|---|---|
+| --- | --- | --- |
 | `SCENESET_DEFAULT_APPNAME` | `com.rdkcentral.refui` | Default application ID to launch |
 | `FACTORY_APP_PATH` | `/etc/rdk/factoryapps` | Path to factory app bundles copied on first boot |
 | `APP_PREINSTALL_DIRECTORY` | `/media/apps` | Fallback preinstall directory (also resolved dynamically from PackageManagerRDKEMS config) |
