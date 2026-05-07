@@ -62,7 +62,7 @@ The project uses CMake for building.
 | --- | --- | --- |
 | `SCENESET_DEFAULT_APPNAME` | `com.rdkcentral.refui` | Default application ID to launch |
 | `FACTORY_APP_PATH` | `/etc/rdk/factoryapps` | Path to factory app bundles copied on first boot |
-| `APP_PREINSTALL_DIRECTORY` | `/media/apps` | Fallback preinstall directory (also resolved dynamically from PackageManagerRDKEMS config) |
+| `APP_PREINSTALL_DIRECTORY` | `/media/apps` | Fallback preinstall directory (also resolved dynamically from the PreinstallManager plugin config key `appPreinstallDirectory`) |
 | `DAC_APP_CERT_PATH` | `/etc/rdk/certs` | Directory containing DAC certificates for RALF package verification |
 | `DISABLE_REFERENCE_APP_UPDATE` | `OFF` | Set to `ON` to disable download monitoring and OTA update support |
 
