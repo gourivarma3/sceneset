@@ -29,15 +29,17 @@ SceneSet is designed to run as a systemd service that:
 
 ## Configuration
 
-### Environment Variables
-
-- **`SCENESET_DEFAULT_APPNAME`**: Specifies the application to launch at startup (can also be overridden via the runtime config file; see below)
+### Runtime Environment Variables
 
 - **`THUNDER_ACCESS`**: Optional path to Thunder communicator socket
   - Default: `/tmp/communicator`
 
 - **`SCENESET_INITIAL_DOWNLOAD_SWEEP`**: Process packages already present in the download directory at monitor startup
   - Default: `0` (disabled). Set to `1` to enable, `0` to disable
+
+### Build-Time Defaults
+
+- **`SCENESET_DEFAULT_APPNAME`**: Compile-time default application ID set through the CMake variable of the same name (can be overridden at runtime via `/opt/sceneset_app.conf`)
 
 ### Runtime Configuration File
 
