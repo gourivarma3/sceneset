@@ -35,7 +35,7 @@ SceneSet is designed to run as a systemd service that:
   - Default: `/tmp/communicator`
 
 - **`SCENESET_INITIAL_DOWNLOAD_SWEEP`**: Process packages already present in the download directory at monitor startup
-  - Default: `0` (disabled). Set to `1` to enable, `0` to disable
+  - Default: `0` (disabled). Accepted enabled values: `1`, `true`, `yes`, `on`. Accepted disabled values: `0`, `false`, `no`, `off`
 
 ### Build-Time Defaults
 
