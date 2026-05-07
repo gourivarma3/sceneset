@@ -60,13 +60,15 @@ The project uses CMake for building.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `SCENESET_DEFAULT_APPNAME` | `com.rdkcentral.refui` | Default application ID to launch |
-| `FACTORY_APP_PATH` | `/etc/rdk/factoryapps` | Path to factory app bundles copied on first boot |
-| `APP_PREINSTALL_DIRECTORY` | `/media/apps` | Fallback preinstall directory (also resolved dynamically from the PreinstallManager plugin config key `appPreinstallDirectory`) |
+| `SCENESET_DEFAULT_APPNAME` | empty/unset | Default application ID to launch when explicitly provided by the build |
+| `FACTORY_APP_PATH` | empty/unset | Path to factory app bundles copied on first boot when explicitly provided by the build |
+| `APP_PREINSTALL_DIRECTORY` | empty/unset | Fallback preinstall directory when explicitly provided by the build (also resolved dynamically from the PreinstallManager plugin config key `appPreinstallDirectory`) |
 | `DAC_APP_CERT_PATH` | `/etc/rdk/certs` | Directory containing DAC certificates for RALF package verification |
 | `DISABLE_REFERENCE_APP_UPDATE` | `OFF` | Set to `ON` to disable download monitoring and OTA update support |
 
 > **Note:** If `FACTORY_APP_PATH` is set, `APP_PREINSTALL_DIRECTORY` must also be set.
+>
+> Typical integrator-provided values may include `SCENESET_DEFAULT_APPNAME=com.rdkcentral.refui`, `FACTORY_APP_PATH=/etc/rdk/factoryapps`, and `APP_PREINSTALL_DIRECTORY=/media/apps`, but these are not the built-in CMake defaults unless passed explicitly.
 
 ## Startup Flow
 
