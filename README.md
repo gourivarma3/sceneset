@@ -47,8 +47,10 @@ SceneSet is designed to run as a systemd service that:
 
   Sample /opt/sceneset_app.conf
 
+  ```
   root@ipstb-mediabox-rtd1325:/opt# cat /opt/sceneset_app.conf  
   com.rdkcentral.Netflix
+  ```
 
 ## Build Instructions
 
