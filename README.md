@@ -44,6 +44,9 @@ SceneSet is designed to run as a systemd service that:
 ### Runtime Configuration File
 
 - **`/opt/sceneset_app.conf`**: Optional plain-text file whose first line overrides `SCENESET_DEFAULT_APPNAME` at runtime. Useful for changing the launched app without rebuilding.
+  - Sample /opt/sceneset_app.conf
+    root@ipstb-mediabox-rtd1325:/opt# cat /opt/sceneset_app.conf
+    com.rdkcentral.Netflix
 
 ## Build Instructions
 
