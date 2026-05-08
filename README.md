@@ -45,12 +45,12 @@ SceneSet is designed to run as a systemd service that:
 
 - **`/opt/sceneset_app.conf`**: Optional plain-text file whose first line overrides `SCENESET_DEFAULT_APPNAME` at runtime. Useful for changing the launched app without rebuilding.
 
-  Sample /opt/sceneset_app.conf
+Sample /opt/sceneset_app.conf
 
-  ```
-  root@ipstb-mediabox-rtd1325:/opt# cat /opt/sceneset_app.conf  
-  com.rdkcentral.Netflix
-  ```
+```text
+root@ipstb-mediabox-rtd1325:/opt# cat /opt/sceneset_app.conf
+com.rdkcentral.Netflix
+```
 
 ## Build Instructions
 
@@ -86,7 +86,7 @@ The project uses CMake for building.
 5. Starts preinstall (force mode on FSR, normal mode on subsequent boots) and waits for `OnPreinstallationComplete`
 6. If preinstall succeeds, cleans up the preinstall directory; otherwise preserves files for retry on next boot
 7. Checks if the reference app is already installed and launches it
-8. Unless `DISABLE_REFERENCE_APP_UPDATE=ON`, starts a download directory monitor for OTA updates
+8. Unless built with `-DDISABLE_REFERENCE_APP_UPDATE=ON`, starts a download directory monitor for OTA updates
 
 ## Service Dependencies
 
