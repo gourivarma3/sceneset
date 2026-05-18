@@ -16,7 +16,6 @@ on:
     branches:
       - main
       - develop
-      - feature/RDKMVE-1843
     paths:
       - 'SceneSet/**'
       - '.github/workflows/SceneSet-L1-tests.yml'
