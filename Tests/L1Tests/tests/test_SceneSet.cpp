@@ -715,12 +715,13 @@ TEST_F(SceneSetTest, GetInstalledReferenceAppVersionReturnsEmptyWhenReferenceApp
 
 // Test getInstalledReferenceAppVersion returns empty when AppManager is null (not initialized)
 TEST_F(SceneSetTest, GetInstalledReferenceAppVersionReturnsEmptyWhenAppManagerIsNull) {
-    setenv("SCENESET_DEFAULT_APPNAME", "com.example.testapp", 1);
+    unsetenv("SCENESET_DEFAULT_APPNAME");
     SceneSetApp app;
 
     const std::string& refAppId = SceneSetAppTestPeer::GetReferenceAppId(app);
     if (refAppId.empty()) {
-        GTEST_SKIP() << "Reference app ID is empty; cannot test null-manager path.";
+        GTEST_SKIP() << "Reference app ID is empty in this build/runtime configuration; "
+                     << "cannot test null-manager path.";
     }
 
     // m_appManager is null because initialize() was never called
