@@ -17,14 +17,18 @@ on:
       - main
       - develop
     paths:
-      - 'SceneSet/**'
+      - 'src/**'
+      - 'Tests/**'
+      - 'CMakeLists.txt'
       - '.github/workflows/SceneSet-L1-tests.yml'
   pull_request:
     branches:
       - main
       - develop
     paths:
-      - 'SceneSet/**'
+      - 'src/**'
+      - 'Tests/**'
+      - 'CMakeLists.txt'
       - '.github/workflows/SceneSet-L1-tests.yml'
 
 env:
@@ -160,7 +164,7 @@ jobs:
         with:
           repository: rdkcentral/ralf-utils
           path: ralf-utils
-          ref: main
+          ref: f2ef8cb017e1f960a76427a4addf86c88d7a65ec
 
       - name: Build ralf-utils
         run: >

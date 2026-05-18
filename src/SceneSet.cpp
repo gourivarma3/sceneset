@@ -474,7 +474,7 @@ bool SceneSetApp::isReferenceAppInstalled() {
 
 bool SceneSetApp::isFactoryAppsCopied() {
 #ifdef UNIT_TEST
-    const std::string& markerPath = m_factoryAppsCopiedMarkerOverride.empty()
+    const std::string markerPath = m_factoryAppsCopiedMarkerOverride.empty()
         ? std::string(FACTORY_APPS_COPIED_MARKER) : m_factoryAppsCopiedMarkerOverride;
 #else
     const std::string markerPath = FACTORY_APPS_COPIED_MARKER;
@@ -489,7 +489,7 @@ bool SceneSetApp::isFactoryAppsCopied() {
 
 void SceneSetApp::markFactoryAppsCopied() {
 #ifdef UNIT_TEST
-    const std::string& markerPath = m_factoryAppsCopiedMarkerOverride.empty()
+    const std::string markerPath = m_factoryAppsCopiedMarkerOverride.empty()
         ? std::string(FACTORY_APPS_COPIED_MARKER) : m_factoryAppsCopiedMarkerOverride;
 #else
     const std::string markerPath = FACTORY_APPS_COPIED_MARKER;
