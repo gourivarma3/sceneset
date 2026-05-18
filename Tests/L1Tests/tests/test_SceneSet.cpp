@@ -701,7 +701,6 @@ TEST_F(SceneSetTest, InitialDownloadSweepHandlesAdditionalEnvFlagValues) {
 
 // Test getInstalledReferenceAppVersion returns empty when reference app ID is empty
 TEST_F(SceneSetTest, GetInstalledReferenceAppVersionReturnsEmptyWhenReferenceAppIdIsEmpty) {
-    unsetenv("SCENESET_DEFAULT_APPNAME");
     SceneSetApp app;
 
     const std::string& refAppId = SceneSetAppTestPeer::GetReferenceAppId(app);
@@ -715,7 +714,6 @@ TEST_F(SceneSetTest, GetInstalledReferenceAppVersionReturnsEmptyWhenReferenceApp
 
 // Test getInstalledReferenceAppVersion returns empty when AppManager is null (not initialized)
 TEST_F(SceneSetTest, GetInstalledReferenceAppVersionReturnsEmptyWhenAppManagerIsNull) {
-    unsetenv("SCENESET_DEFAULT_APPNAME");
     SceneSetApp app;
 
     const std::string& refAppId = SceneSetAppTestPeer::GetReferenceAppId(app);
