@@ -64,6 +64,8 @@ public:
 
     ScopedEnvVarOverride(const ScopedEnvVarOverride&) = delete;
     ScopedEnvVarOverride& operator=(const ScopedEnvVarOverride&) = delete;
+    ScopedEnvVarOverride(ScopedEnvVarOverride&&) = delete;
+    ScopedEnvVarOverride& operator=(ScopedEnvVarOverride&&) = delete;
 
 private:
     std::string m_name;
