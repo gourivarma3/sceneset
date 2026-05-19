@@ -41,6 +41,35 @@ std::filesystem::path MakeUniqueTempPath(const std::string& prefix) {
     name << prefix << "_" << now << "_" << tid;
     return std::filesystem::temp_directory_path() / name.str();
 }
+
+class ScopedEnvVarOverride {
+public:
+    ScopedEnvVarOverride(const char* name, const char* value)
+        : m_name(name), m_hadOriginalValue(false) {
+        const char* originalValue = std::getenv(name);
+        if (originalValue != nullptr) {
+            m_hadOriginalValue = true;
+            m_originalValue = originalValue;
+        }
+        setenv(name, value, 1);
+    }
+
+    ~ScopedEnvVarOverride() {
+        if (m_hadOriginalValue) {
+            setenv(m_name.c_str(), m_originalValue.c_str(), 1);
+        } else {
+            unsetenv(m_name.c_str());
+        }
+    }
+
+    ScopedEnvVarOverride(const ScopedEnvVarOverride&) = delete;
+    ScopedEnvVarOverride& operator=(const ScopedEnvVarOverride&) = delete;
+
+private:
+    std::string m_name;
+    bool m_hadOriginalValue;
+    std::string m_originalValue;
+};
 } // namespace
 
 class SceneSetAppTestPeer {
@@ -1670,7 +1699,7 @@ TEST_F(SceneSetTest, GetInstalledReferenceAppVersionReturnsEmptyForNewlyConstruc
 
 // Test fetchPluginConfigValue returns false when Thunder is unreachable (invalid path)
 TEST_F(SceneSetTest, FetchPluginConfigValueReturnsFalseWhenThunderUnreachable) {
-    setenv("THUNDER_ACCESS", "/invalid/thunder/path", 1);
+    ScopedEnvVarOverride thunderAccess("THUNDER_ACCESS", "/invalid/thunder/path");
     SceneSetApp app;
 
     std::string value = "should_be_cleared";
@@ -1683,7 +1712,7 @@ TEST_F(SceneSetTest, FetchPluginConfigValueReturnsFalseWhenThunderUnreachable) {
 
 // Test fetchPluginConfigValue clears the value parameter on failure
 TEST_F(SceneSetTest, FetchPluginConfigValueClearsValueOnFailure) {
-    setenv("THUNDER_ACCESS", "/nonexistent/communicator", 1);
+    ScopedEnvVarOverride thunderAccess("THUNDER_ACCESS", "/nonexistent/communicator");
     SceneSetApp app;
 
     std::string value = "pre_existing_value";
@@ -1695,7 +1724,7 @@ TEST_F(SceneSetTest, FetchPluginConfigValueClearsValueOnFailure) {
 
 // Test fetchPluginConfigValue returns false for an empty callsign
 TEST_F(SceneSetTest, FetchPluginConfigValueReturnsFalseForEmptyCallsign) {
-    setenv("THUNDER_ACCESS", "/invalid/path", 1);
+    ScopedEnvVarOverride thunderAccess("THUNDER_ACCESS", "/invalid/path");
     SceneSetApp app;
 
     std::string value;
@@ -1707,7 +1736,7 @@ TEST_F(SceneSetTest, FetchPluginConfigValueReturnsFalseForEmptyCallsign) {
 
 // Test fetchPluginConfigValue returns false for an empty config key
 TEST_F(SceneSetTest, FetchPluginConfigValueReturnsFalseForEmptyConfigKey) {
-    setenv("THUNDER_ACCESS", "/invalid/path", 1);
+    ScopedEnvVarOverride thunderAccess("THUNDER_ACCESS", "/invalid/path");
     SceneSetApp app;
 
     std::string value;
@@ -1719,7 +1748,7 @@ TEST_F(SceneSetTest, FetchPluginConfigValueReturnsFalseForEmptyConfigKey) {
 
 // Test fetchPluginConfigValue does not throw
 TEST_F(SceneSetTest, FetchPluginConfigValueDoesNotThrow) {
-    setenv("THUNDER_ACCESS", "/invalid/path", 1);
+    ScopedEnvVarOverride thunderAccess("THUNDER_ACCESS", "/invalid/path");
     SceneSetApp app;
 
     std::string value;
@@ -1733,7 +1762,7 @@ TEST_F(SceneSetTest, FetchPluginConfigValueDoesNotThrow) {
 
 // Test resolveDynamicDirectories does not throw when Thunder is unavailable
 TEST_F(SceneSetTest, ResolveDynamicDirectoriesDoesNotThrowWhenThunderUnavailable) {
-    setenv("THUNDER_ACCESS", "/invalid/path", 1);
+    ScopedEnvVarOverride thunderAccess("THUNDER_ACCESS", "/invalid/path");
     SceneSetApp app;
 
     EXPECT_NO_THROW({
@@ -1743,7 +1772,7 @@ TEST_F(SceneSetTest, ResolveDynamicDirectoriesDoesNotThrowWhenThunderUnavailable
 
 // Test resolveDynamicDirectories preserves download directory when Thunder is unavailable
 TEST_F(SceneSetTest, ResolveDynamicDirectoriesPreservesDownloadDirectoryWhenThunderUnavailable) {
-    setenv("THUNDER_ACCESS", "/invalid/path", 1);
+    ScopedEnvVarOverride thunderAccess("THUNDER_ACCESS", "/invalid/path");
     SceneSetApp app;
     SceneSetAppTestPeer::SetDownloadDirectory(app, "/preexisting/download/dir");
 
@@ -1754,7 +1783,7 @@ TEST_F(SceneSetTest, ResolveDynamicDirectoriesPreservesDownloadDirectoryWhenThun
 
 // Test resolveDynamicDirectories preserves preinstall directory when Thunder is unavailable
 TEST_F(SceneSetTest, ResolveDynamicDirectoriesPreservesPreinstallDirectoryWhenThunderUnavailable) {
-    setenv("THUNDER_ACCESS", "/invalid/path", 1);
+    ScopedEnvVarOverride thunderAccess("THUNDER_ACCESS", "/invalid/path");
     SceneSetApp app;
     SceneSetAppTestPeer::SetPreinstallDirectory(app, "/preexisting/preinstall/dir");
 
@@ -1765,7 +1794,7 @@ TEST_F(SceneSetTest, ResolveDynamicDirectoriesPreservesPreinstallDirectoryWhenTh
 
 // Test resolveDynamicDirectories can be called multiple times without crashing
 TEST_F(SceneSetTest, ResolveDynamicDirectoriesCanBeCalledMultipleTimes) {
-    setenv("THUNDER_ACCESS", "/invalid/path", 1);
+    ScopedEnvVarOverride thunderAccess("THUNDER_ACCESS", "/invalid/path");
     SceneSetApp app;
 
     EXPECT_NO_THROW({
