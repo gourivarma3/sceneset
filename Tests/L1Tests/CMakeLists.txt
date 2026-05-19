@@ -42,6 +42,7 @@ add_executable(${TEST_EXECUTABLE} ${TEST_SRC})
 target_compile_definitions(${TEST_EXECUTABLE} PRIVATE
     UNIT_TEST
     DAC_APP_CERT_PATH="/etc/rdk/certs"
+    SCENESET_DEFAULT_APPNAME="TestApp"
 )
 
 # WPEFramework library paths
