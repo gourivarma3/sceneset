@@ -2895,10 +2895,11 @@ TEST_F(AppManagerMockEventHandlerTest, OnAppLifecycleStateChangedPendingRestartT
     SceneSetAppTestPeer::SetAppLaunched(instance, true);
     SceneSetAppTestPeer::SetPendingRestart(instance, true);
 
-    std::promise<void> launchCalled;
+    auto launchCalled = std::make_shared<std::promise<void>>();
+    auto future = launchCalled->get_future();
     EXPECT_CALL(mockAppMgr, LaunchApp(refId, testing::_, testing::_))
         .WillOnce(testing::DoAll(
-            testing::InvokeWithoutArgs([&launchCalled]() { launchCalled.set_value(); }),
+            testing::InvokeWithoutArgs([launchCalled]() { launchCalled->set_value(); }),
             testing::Return(Core::ERROR_NONE)));
 
     SceneSetAppTestPeer::CallAppManagerOnAppLifecycleStateChanged(
@@ -2911,7 +2912,6 @@ TEST_F(AppManagerMockEventHandlerTest, OnAppLifecycleStateChangedPendingRestartT
     EXPECT_FALSE(SceneSetAppTestPeer::GetAppLaunched(instance));
 
     // Wait for the launch thread to call LaunchApp (500 ms generous timeout).
-    auto future = launchCalled.get_future();
     EXPECT_EQ(future.wait_for(std::chrono::milliseconds(500)), std::future_status::ready)
         << "LaunchApp was not called within the expected timeout";
 }
@@ -2927,10 +2927,11 @@ TEST_F(AppManagerMockEventHandlerTest, OnAppLifecycleStateChangedAbortTriggersCr
     SceneSetAppTestPeer::SetAppLaunched(instance, true);
     SceneSetAppTestPeer::SetPendingRestart(instance, false);
 
-    std::promise<void> launchCalled;
+    auto launchCalled = std::make_shared<std::promise<void>>();
+    auto future = launchCalled->get_future();
     EXPECT_CALL(mockAppMgr, LaunchApp(refId, testing::_, testing::_))
         .WillOnce(testing::DoAll(
-            testing::InvokeWithoutArgs([&launchCalled]() { launchCalled.set_value(); }),
+            testing::InvokeWithoutArgs([launchCalled]() { launchCalled->set_value(); }),
             testing::Return(Core::ERROR_NONE)));
 
     SceneSetAppTestPeer::CallAppManagerOnAppLifecycleStateChanged(
@@ -2942,7 +2943,6 @@ TEST_F(AppManagerMockEventHandlerTest, OnAppLifecycleStateChangedAbortTriggersCr
     EXPECT_FALSE(SceneSetAppTestPeer::GetAppLaunched(instance));
     EXPECT_FALSE(SceneSetAppTestPeer::GetPendingRestart(instance));
 
-    auto future = launchCalled.get_future();
     EXPECT_EQ(future.wait_for(std::chrono::milliseconds(500)), std::future_status::ready)
         << "LaunchApp was not called within the expected timeout";
 }
