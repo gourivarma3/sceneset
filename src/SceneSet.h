@@ -27,6 +27,7 @@
 #include <csignal>
 #include <filesystem>
 #include <mutex>
+#include <unordered_map>
 #include <systemd/sd-daemon.h>
 
 #ifndef MODULE_NAME
@@ -88,7 +89,7 @@ private:
     std::shared_ptr<WPEFramework::Exchange::IPreinstallManager::INotification> m_preinstallManagerEventHandler;
     std::shared_ptr<WPEFramework::Exchange::IPackageInstaller::INotification> m_packageInstallerEventHandler;
     std::string m_appmgrCallsign, m_preinstallCallsign;
-    const std::string m_referenceAppId;
+    std::string m_referenceAppId;
     std::string m_comrpcPath;
     std::string m_downloadDirectory;
     std::string m_preinstallDirectory;
@@ -130,6 +131,8 @@ private:
     std::string getThunderAccessPath() const;
     bool fetchPluginConfigValue(const std::string& callsign, const std::string& configKey, std::string& value) const;
     void resolveDynamicDirectories();
+    std::string getSystemConfigPath() const;
+    bool loadSystemConfig(std::unordered_map<std::string, std::string>& values) const;
 
     class AppManagerEventHandler : public Exchange::IAppManager::INotification {
     public:
