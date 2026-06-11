@@ -29,9 +29,18 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <unordered_map>
 
 #include "SceneSet.h"
 #include "RalfPackageSupport.h"
+
+#ifndef ENABLE_CONFIG_OVERRIDE
+#define ENABLE_CONFIG_OVERRIDE 0
+#endif
+
+#ifndef ENABLE_SYSTEM_CONFIG
+#define ENABLE_SYSTEM_CONFIG 0
+#endif
 
 namespace {
 std::filesystem::path MakeUniqueTempPath(const std::string& prefix) {
@@ -193,6 +202,10 @@ public:
                                            const std::string& configKey,
                                            std::string& value) {
         return app.fetchPluginConfigValue(callsign, configKey, value);
+    }
+
+    static bool LoadSystemConfig(const SceneSetApp& app, std::unordered_map<std::string, std::string>& values) {
+        return app.loadSystemConfig(values);
     }
 
     static void CallResolveDynamicDirectories(SceneSetApp& app) {
@@ -383,6 +396,8 @@ protected:
         unsetenv("THUNDER_ACCESS");
         unsetenv("SCENESET_DEFAULT_APPNAME");
         unsetenv("SCENESET_INITIAL_DOWNLOAD_SWEEP");
+        unsetenv("SCENESET_SYSTEM_CONFIG_FILE");
+        unsetenv("SCENESET_OVERRIDE_CONFIG_FILE");
     }
 };
 
@@ -2150,8 +2165,8 @@ TEST_F(AppManagerEventHandlerTest, OnAppLifecycleStateChangedDoesNotClearAppLaun
 }
 
 // UNLOADED from TERMINATING with a non-ABORT error reason and no pendingRestart
-// takes only the inner else (no restart) path
-TEST_F(AppManagerEventHandlerTest, OnAppLifecycleStateChangedNoRestartOnUnloadedFromTerminatingWithNonAbortReason) {
+// keeps flags in a consistent state regardless of build type.
+TEST_F(AppManagerEventHandlerTest, OnAppLifecycleStateChangedNonAbortKeepsExpectedFlags) {
     SceneSetApp& instance = SceneSetApp::getInstance();
     const std::string& refId = SceneSetAppTestPeer::GetReferenceAppId(instance);
     if (refId.empty()) {
@@ -2160,9 +2175,6 @@ TEST_F(AppManagerEventHandlerTest, OnAppLifecycleStateChangedNoRestartOnUnloaded
     SceneSetAppTestPeer::SetAppLaunched(instance, true);
     SceneSetAppTestPeer::SetPendingRestart(instance, false);
 
-    // oldState=TERMINATING but errorReason is 0 (not APP_ERROR_ABORT) — the inner
-    // else-if condition is false so neither the pendingRestart nor the crash-restart
-    // branch is entered.
     EXPECT_NO_THROW({
         SceneSetAppTestPeer::CallAppManagerOnAppLifecycleStateChanged(
             refId, "inst-1",
@@ -2945,4 +2957,190 @@ TEST_F(AppManagerMockEventHandlerTest, OnAppLifecycleStateChangedAbortTriggersCr
 
     EXPECT_EQ(future.wait_for(std::chrono::milliseconds(500)), std::future_status::ready)
         << "LaunchApp was not called within the expected timeout";
+}
+
+// Validates compile-time lifecycle behavior for non-ABORT unloads:
+// - default build: no restart
+// - RESTART_HOMEAPP_ALWAYS build: restart on TERMINATING -> UNLOADED
+TEST_F(AppManagerMockEventHandlerTest, OnAppLifecycleStateChangedNonAbortBehaviorMatchesBuildType) {
+    SceneSetApp& instance = SceneSetApp::getInstance();
+    const std::string& refId = SceneSetAppTestPeer::GetReferenceAppId(instance);
+    if (refId.empty()) {
+        GTEST_SKIP() << "Reference app ID is empty; skipping.";
+    }
+    SceneSetAppTestPeer::SetAppLaunched(instance, true);
+    SceneSetAppTestPeer::SetPendingRestart(instance, false);
+
+#if RESTART_HOMEAPP_ALWAYS
+    auto launchCalled = std::make_shared<std::promise<void>>();
+    auto future = launchCalled->get_future();
+    EXPECT_CALL(mockAppMgr, LaunchApp(refId, testing::_, testing::_))
+        .WillOnce(testing::DoAll(
+            testing::InvokeWithoutArgs([launchCalled]() { launchCalled->set_value(); }),
+            testing::Return(Core::ERROR_NONE)));
+#else
+    EXPECT_CALL(mockAppMgr, LaunchApp(testing::_, testing::_, testing::_)).Times(0);
+#endif
+
+    SceneSetAppTestPeer::CallAppManagerOnAppLifecycleStateChanged(
+        refId, "inst-1",
+        Exchange::IAppManager::AppLifecycleState::APP_STATE_UNLOADED,
+        Exchange::IAppManager::AppLifecycleState::APP_STATE_TERMINATING,
+        static_cast<Exchange::IAppManager::AppErrorReason>(0));
+
+    EXPECT_FALSE(SceneSetAppTestPeer::GetAppLaunched(instance));
+    EXPECT_FALSE(SceneSetAppTestPeer::GetPendingRestart(instance));
+
+#if RESTART_HOMEAPP_ALWAYS
+    EXPECT_EQ(future.wait_for(std::chrono::milliseconds(500)), std::future_status::ready)
+        << "LaunchApp was not called within the expected timeout";
+#endif
+}
+
+TEST_F(SceneSetTest, LoadSystemConfigReturnsValuesWhenPresent) {
+    SceneSetApp app;
+    const auto configPath = MakeUniqueTempPath("sceneset_system_config");
+    {
+        std::ofstream configFile(configPath);
+        configFile << "preinstallLocation=/tmp/preinstall_from_config" << std::endl;
+    }
+
+    setenv("SCENESET_SYSTEM_CONFIG_FILE", configPath.c_str(), 1);
+
+    std::unordered_map<std::string, std::string> values;
+    EXPECT_TRUE(SceneSetAppTestPeer::LoadSystemConfig(app, values));
+    ASSERT_TRUE(values.find("preinstallLocation") != values.end());
+    EXPECT_EQ(values["preinstallLocation"], "/tmp/preinstall_from_config");
+
+    std::error_code ec;
+    std::filesystem::remove(configPath, ec);
+}
+
+TEST_F(SceneSetTest, LoadSystemConfigReturnsFalseWhenFileMissing) {
+    SceneSetApp app;
+
+    const auto missingPath = MakeUniqueTempPath("sceneset_missing_system_config");
+    setenv("SCENESET_SYSTEM_CONFIG_FILE", missingPath.c_str(), 1);
+    std::unordered_map<std::string, std::string> values;
+    EXPECT_FALSE(SceneSetAppTestPeer::LoadSystemConfig(app, values));
+}
+
+TEST_F(SceneSetTest, LoadSystemConfigSucceedsWhenKeyAbsent) {
+    SceneSetApp app;
+    const auto configWithoutKeyPath = MakeUniqueTempPath("sceneset_system_config_no_key");
+    {
+        std::ofstream configFile(configWithoutKeyPath);
+        configFile << "someOtherSetting=/tmp/ignored" << std::endl;
+    }
+
+    setenv("SCENESET_SYSTEM_CONFIG_FILE", configWithoutKeyPath.c_str(), 1);
+    std::unordered_map<std::string, std::string> values;
+    EXPECT_TRUE(SceneSetAppTestPeer::LoadSystemConfig(app, values));
+    EXPECT_TRUE(values.find("preinstallLocation") == values.end());
+
+    std::error_code ec;
+    std::filesystem::remove(configWithoutKeyPath, ec);
+}
+
+TEST_F(SceneSetTest, LoadSystemConfigKeepsRelativePreinstallLocationAsConfigured) {
+    SceneSetApp app;
+    const auto configPath = MakeUniqueTempPath("sceneset_system_config_relative");
+    {
+        std::ofstream configFile(configPath);
+        configFile << "preinstallLocation=relative/preinstall/path" << std::endl;
+    }
+
+    setenv("SCENESET_SYSTEM_CONFIG_FILE", configPath.c_str(), 1);
+
+    std::unordered_map<std::string, std::string> values;
+    EXPECT_TRUE(SceneSetAppTestPeer::LoadSystemConfig(app, values));
+    ASSERT_TRUE(values.find("preinstallLocation") != values.end());
+    EXPECT_EQ(values["preinstallLocation"], "relative/preinstall/path");
+
+    std::error_code ec;
+    std::filesystem::remove(configPath, ec);
+}
+
+TEST_F(SceneSetTest, LoadSystemConfigReadsDefaultHomeAppWhenPresent) {
+    SceneSetApp app;
+    const auto configPath = MakeUniqueTempPath("sceneset_system_config_default_home_app");
+    {
+        std::ofstream configFile(configPath);
+        configFile << "defaultHomeApp=org.rdk.EPG" << std::endl;
+    }
+
+    setenv("SCENESET_SYSTEM_CONFIG_FILE", configPath.c_str(), 1);
+
+    std::unordered_map<std::string, std::string> values;
+    ASSERT_TRUE(SceneSetAppTestPeer::LoadSystemConfig(app, values));
+    ASSERT_TRUE(values.find("defaultHomeApp") != values.end());
+    EXPECT_EQ(values["defaultHomeApp"], "org.rdk.EPG");
+
+    std::error_code ec;
+    std::filesystem::remove(configPath, ec);
+}
+
+TEST_F(SceneSetTest, LoadSystemConfigHandlesMissingOrEmptyDefaultHomeApp) {
+    SceneSetApp app;
+
+    const auto missingKeyConfigPath = MakeUniqueTempPath("sceneset_system_config_no_default_home_app");
+    {
+        std::ofstream configFile(missingKeyConfigPath);
+        configFile << "preinstallLocation=/tmp/preinstall_from_config" << std::endl;
+    }
+
+    setenv("SCENESET_SYSTEM_CONFIG_FILE", missingKeyConfigPath.c_str(), 1);
+
+    std::unordered_map<std::string, std::string> values;
+    ASSERT_TRUE(SceneSetAppTestPeer::LoadSystemConfig(app, values));
+    EXPECT_TRUE(values.find("defaultHomeApp") == values.end());
+
+    const auto emptyKeyConfigPath = MakeUniqueTempPath("sceneset_system_config_empty_default_home_app");
+    {
+        std::ofstream configFile(emptyKeyConfigPath);
+        configFile << "defaultHomeApp=" << std::endl;
+    }
+
+    setenv("SCENESET_SYSTEM_CONFIG_FILE", emptyKeyConfigPath.c_str(), 1);
+    ASSERT_TRUE(SceneSetAppTestPeer::LoadSystemConfig(app, values));
+    ASSERT_TRUE(values.find("defaultHomeApp") != values.end());
+    EXPECT_TRUE(values["defaultHomeApp"].empty());
+
+    std::error_code ec;
+    std::filesystem::remove(missingKeyConfigPath, ec);
+    std::filesystem::remove(emptyKeyConfigPath, ec);
+}
+
+TEST_F(SceneSetTest, LoadSystemConfigOverrideBehaviorMatchesBuildType) {
+    SceneSetApp app;
+    const auto baseConfigPath = MakeUniqueTempPath("sceneset_system_config_base");
+    const auto overrideConfigPath = MakeUniqueTempPath("sceneset_system_config_override");
+    {
+        std::ofstream configFile(baseConfigPath);
+        configFile << "preinstallLocation=/tmp/base_preinstall" << std::endl;
+        configFile << "defaultHomeApp=org.rdk.BaseHome" << std::endl;
+    }
+    {
+        std::ofstream configFile(overrideConfigPath);
+        configFile << "defaultHomeApp=org.rdk.OverrideHome" << std::endl;
+    }
+
+    setenv("SCENESET_SYSTEM_CONFIG_FILE", baseConfigPath.c_str(), 1);
+    setenv("SCENESET_OVERRIDE_CONFIG_FILE", overrideConfigPath.c_str(), 1);
+
+    std::unordered_map<std::string, std::string> values;
+    ASSERT_TRUE(SceneSetAppTestPeer::LoadSystemConfig(app, values));
+    ASSERT_TRUE(values.find("defaultHomeApp") != values.end());
+    ASSERT_TRUE(values.find("preinstallLocation") != values.end());
+
+#if ENABLE_CONFIG_OVERRIDE
+    EXPECT_EQ(values["defaultHomeApp"], "org.rdk.OverrideHome");
+#else
+    EXPECT_EQ(values["defaultHomeApp"], "org.rdk.BaseHome");
+#endif
+    EXPECT_EQ(values["preinstallLocation"], "/tmp/base_preinstall");
+
+    std::error_code ec;
+    std::filesystem::remove(baseConfigPath, ec);
+    std::filesystem::remove(overrideConfigPath, ec);
 }

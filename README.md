@@ -21,11 +21,11 @@ SceneSet is designed to run as a systemd service that:
 - **Factory Settings Reset (FSR) Support**: Detects first boot via a marker file and copies factory app bundles to the preinstall directory using force-install mode; subsequent boots use normal (version-aware) install mode
 - **Over-the-Air Update Monitoring**: Watches a configured download directory for new RALF packages using inotify; verifies them with libralf and stages them for installation via PreinstallManager
 - **Reference App Update & Restart**: Detects when a new version of the reference app is installed and automatically kills and restarts it
-- **PackageInstaller Event Monitoring**: Tracks per-package installation status from `org.rdk.PackageManagerRDKEMS` to confirm successful preinstall before cleaning up staged bundles
+- **PackageInstaller Event Monitoring**: Tracks per-package installation status from `org.rdk.AppPackageManager` to confirm successful preinstall before cleaning up staged bundles
 - **Crash Recovery**: Automatically restarts the reference app on an ABORT lifecycle error
 - **Signal Handling**: Graceful shutdown on SIGTERM/SIGINT signals
 - **Systemd Integration**: Reports readiness via `sd_notify` and runs as a `Type=notify` systemd service
-- **Thunder Integration**: Uses WPEFramework COMRPC for AppManager, PreinstallManager, and PackageManagerRDKEMS communication
+and·‌AppPackageManager·‌communication- **Thunder Integration**: Uses WPEFramework COMRPC for AppManager, PreinstallManager, and AppPackageManager communication
 
 ## Configuration
 
@@ -58,7 +58,7 @@ The project uses CMake for building.
 
 ### Dependencies
 
-- **WPEFramework**: Core framework and interfaces (AppManager, PreinstallManager, PackageManagerRDKEMS)
+- **WPEFramework**: Core framework and interfaces (AppManager, PreinstallManager, AppPackageManager)
 - **libralf**: RALF package verification and metadata extraction
 - **libsystemd**: systemd integration (`sd_notify`)
 - **gtest/gmock**: For unit testing
@@ -71,6 +71,9 @@ The project uses CMake for building.
 | `FACTORY_APP_PATH` | empty/unset | Path to factory app bundles copied on first boot when explicitly provided by the build |
 | `APP_PREINSTALL_DIRECTORY` | empty/unset | Fallback preinstall directory when explicitly provided by the build (also resolved dynamically from the PreinstallManager plugin config key `appPreinstallDirectory`) |
 | `DAC_APP_CERT_PATH` | `/etc/rdk/certs` | Directory containing DAC certificates for RALF package verification |
+| `ENABLE_SYSTEM_CONFIG` | `OFF` | Enables reading `/etc/sceneset.conf` for system-config keys such as `defaultHomeApp` and `preinstallLocation` |
+| `ENABLE_CONFIG_OVERRIDE` | `OFF` | Enables optional `/opt/sceneset.conf` key-level override on top of `/etc/sceneset.conf` |
+| `RESTART_HOMEAPP_ALWAYS` | `OFF` | When `ON`, reference app restarts for any `TERMINATING` to `UNLOADED` transition (not only `APP_ERROR_ABORT`) |
 | `DISABLE_REFERENCE_APP_UPDATE` | `OFF` | Set to `ON` to disable download monitoring and OTA update support |
 
 > **Note:** If `FACTORY_APP_PATH` is set, `APP_PREINSTALL_DIRECTORY` must also be set.
@@ -79,7 +82,7 @@ The project uses CMake for building.
 
 ## Startup Flow
 
-1. Connects to AppManager, PreinstallManager, and PackageManagerRDKEMS via COMRPC
+1. Connects to AppManager, PreinstallManager, and AppPackageManager via COMRPC
 2. Registers for events from all three interfaces
 3. Detects first boot (FSR) by checking for marker file `/opt/persistent/.sceneset_factory_apps_copied`
 4. On first boot: copies factory app bundles from `FACTORY_APP_PATH` to the preinstall directory
@@ -93,7 +96,7 @@ The project uses CMake for building.
 SceneSet connects to the following WPEFramework plugins at runtime:
 - **`org.rdk.AppManager`** — app lifecycle management and launch
 - **`org.rdk.PreinstallManager`** — bundle preinstallation and completion notification
-- **`org.rdk.PackageManagerRDKEMS`** — per-package installation status events and download directory configuration
+- **`org.rdk.AppPackageManager`** — per-package installation status events and download directory configuration
 
 The systemd service unit requires:
 - **Requires/After**: `wpeframework-appmanager.service`
