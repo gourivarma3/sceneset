@@ -12,7 +12,7 @@ SceneSet communicates with three WPEFramework (Thunder) plugins exclusively via 
 |---|---|---|
 | `org.rdk.AppManager` | `Exchange::IAppManager` | Launch, kill, and query app installation; receive lifecycle events |
 | `org.rdk.PreinstallManager` | `Exchange::IPreinstallManager` | Trigger bundle preinstallation; receive completion notification |
-| `org.rdk.PackageManagerRDKEMS` | `Exchange::IPackageInstaller` | Receive per-package installation status events; source of download directory config |
+| `org.rdk.AppPackageManager` | `Exchange::IPackageInstaller` | Receive per-package installation status events; source of download directory config |
 
 ---
 
@@ -24,7 +24,7 @@ During `initialize()`, SceneSet opens a separate `RPC::CommunicatorClient` for e
 
 1. `AppManager` client → `IAppManager` interface.
 2. `PreinstallManager` client → `IPreinstallManager` interface.
-3. `PackageManagerRDKEMS` client → `IPackageInstaller` interface.
+3. `AppPackageManager` client → `IPackageInstaller` interface.
 
 Additionally, a fourth COMRPC client is opened **on demand** (inside `fetchPluginConfigValue`) to query plugin configuration via the `Controller` / `Controller.1` shell. This client is short-lived and released after the config query.
 
@@ -92,7 +92,7 @@ SceneSetApp
     │       └── IPreinstallManager  ←→  org.rdk.PreinstallManager
     │
     ├── CommunicatorClient ──► /tmp/communicator (or THUNDER_ACCESS)
-    │       └── IPackageInstaller  ←→  org.rdk.PackageManagerRDKEMS
+    │       └── IPackageInstaller  ←→  org.rdk.AppPackageManager
     │
     └── CommunicatorClient (on-demand, short-lived)
             └── IShell (Controller) → queryInterfaceByCallsign → plugin ConfigLine

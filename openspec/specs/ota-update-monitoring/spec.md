@@ -2,7 +2,7 @@
 
 ## Overview
 
-After the startup preinstall phase completes, SceneSet optionally monitors a configured download directory for newly arrived RALF packages. When a package matching the reference app is found, SceneSet stages it in the preinstall directory so that `PackageManagerRDKEMS` can install it, after which the reference app is restarted with the new version.
+After the startup preinstall phase completes, SceneSet optionally monitors a configured download directory for newly arrived RALF packages. When a package matching the reference app is found, SceneSet stages it in the preinstall directory so that `AppPackageManager` can install it, after which the reference app is restarted with the new version.
 
 This feature can be disabled at build time with `-DDISABLE_REFERENCE_APP_UPDATE=ON`.
 
@@ -12,7 +12,7 @@ This feature can be disabled at build time with `-DDISABLE_REFERENCE_APP_UPDATE=
 
 ### 1. Download Directory Source
 
-- The download directory is resolved dynamically from the `PackageManagerRDKEMS` plugin config key `downloadDir` via the Thunder Controller during initialization.
+- The download directory is resolved dynamically from the `AppPackageManager` plugin config key `downloadDir` via the Thunder Controller during initialization.
 - If the dynamic lookup returns an empty value, download monitoring is disabled for the session (logged as a warning, not an error).
 - The download directory is **not** configurable at runtime via environment variables or a config file.
 

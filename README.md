@@ -25,7 +25,7 @@ SceneSet is designed to run as a systemd service that:
 - **Crash Recovery**: Automatically restarts the reference app on an ABORT lifecycle error
 - **Signal Handling**: Graceful shutdown on SIGTERM/SIGINT signals
 - **Systemd Integration**: Reports readiness via `sd_notify` and runs as a `Type=notify` systemd service
-- **Thunder Integration**: Uses WPEFramework COMRPC for AppManager, PreinstallManager, and AppPackageManager communication
+and·‌AppPackageManager·‌communication- **Thunder Integration**: Uses WPEFramework COMRPC for AppManager, PreinstallManager, and AppPackageManager communication
 
 ## Configuration
 

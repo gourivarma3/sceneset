@@ -46,7 +46,7 @@ After the factory app copying step (or on a normal boot, skipping it):
 
 ### 4. Waiting for Preinstall Completion
 
-SceneSet waits for `PreinstallManager.OnPreinstallationComplete` before continuing startup. During this wait, SceneSet monitors per-package installation status events from `PackageManagerRDKEMS.OnAppInstallationStatus`.
+SceneSet waits for `PreinstallManager.OnPreinstallationComplete` before continuing startup. During this wait, SceneSet monitors per-package installation status events from `AppPackageManager.OnAppInstallationStatus`.
 
 Each package status event is parsed as a JSON array of objects with `packageId`, `state`, and optional `version` fields. A package is considered to have failed if its `state` is not `INSTALLED` or `INSTALLING`.
 

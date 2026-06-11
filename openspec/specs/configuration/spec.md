@@ -63,7 +63,7 @@ Resolved at startup via `PluginHost::IShell::ConfigLine()` through the Thunder C
 
 | Config source | Key | Member populated |
 |---|---|---|
-| `org.rdk.PackageManagerRDKEMS` | `downloadDir` | Download directory for OTA monitoring |
+| `org.rdk.AppPackageManager` | `downloadDir` | Download directory for OTA monitoring |
 | `org.rdk.PreinstallManager` | `appPreinstallDirectory` | Preinstall directory for bundle staging |
 
 Dynamic lookup is attempted first. If lookup fails or returns an empty string, the compile-time CMake fallback is used for `appPreinstallDirectory`. There is no runtime fallback for `downloadDir` — if it cannot be resolved, download monitoring is disabled.
@@ -126,7 +126,7 @@ preinstallDirectory resolution:
         │ still empty → initialize() returns false
 
 downloadDirectory resolution:
-  PackageManagerRDKEMS plugin config → downloadDir
+  AppPackageManager plugin config → downloadDir
         │ empty
         ▼
   Download monitoring disabled (no fallback)
