@@ -365,7 +365,7 @@ sequenceDiagram
 
 - **Error Handling Strategy**: `Core::hresult` return codes from all COMRPC calls are checked and logged. A failed `StartPreinstall()` call falls through to `completeStartupAfterPreinstall()` immediately rather than waiting for a callback that will never arrive. Preinstall package states outside `INSTALLED` or `INSTALLING` mark the preinstall as failed, causing the preinstall directory to be preserved for retry on next boot. File rename failures in the download staging path fall back to a copy-then-delete sequence.
 
-- **Logging & Diagnostics**: All output goes to stdout (`std::cout`) and stderr (`std::cerr`). The syslog-ng configuration defined in the Yocto recipe routes this output to `/opt/logs/sceneset.log` with a high log rate. Key log points include: COMRPC interface acquisition, sd_notify delivery, event handler registration, first-boot detection, preinstall start and completion, app launch and lifecycle transitions, OTA package detection, and shutdown sequence steps.
+- **Logging & Diagnostics**: All output goes to stdout (`std::cout`) and stderr (`std::cerr`). The Yocto recipe configures syslog-ng (`SYSLOG-NG_DESTINATION_sceneset = "sceneset.log"`, `SYSLOG-NG_LOGRATE_sceneset = "high"`) to route service output to `sceneset.log` under the platform log directory (conventionally `/opt/logs/sceneset.log`). Key log points include: COMRPC interface acquisition, sd_notify delivery, event handler registration, first-boot detection, preinstall start and completion, app launch and lifecycle transitions, OTA package detection, and shutdown sequence steps.
 
 ---
 
