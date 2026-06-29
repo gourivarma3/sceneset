@@ -270,11 +270,14 @@ classDiagram
         +SettingsChanged(resolution, hdr) void
     }
 
+    class IDisplaySettings
+    class IApplication
+
     SceneSetApp --> OnAppStateChange : contains
     SceneSetApp --> OnOtaStatusChange : contains
     SceneSetApp --> OnDisplaySettingsChange : contains
-    SceneSetApp --> "IDisplaySettings" : uses
-    SceneSetApp --> "IApplication" : uses
+    SceneSetApp --> IDisplaySettings : uses
+    SceneSetApp --> IApplication : uses
 ```
 
 ---
