@@ -24,12 +24,12 @@
 
 ## Overview
 
-The `src/` folder contains the complete implementation of the SceneSet application—a Thunder/RDK NanoService responsible for:
+The `src/` folder contains the complete implementation of the SceneSet application—a Thunder COM-RPC client service responsible for:
 
-- Managing display resolution and HDR settings
-- Handling OTA (Over-The-Air) firmware update coordination
-- Responding to application lifecycle state changes
-- Caching and applying user scene preferences
+- Coordinating application preinstall at startup (including first-boot factory app copy)
+- Launching the configured reference app and reacting to AppManager lifecycle events
+- Monitoring the package download directory and feeding packages into the preinstall flow
+- Integrating with systemd readiness notification and graceful termination handling
 
 ### Technology Stack
 
