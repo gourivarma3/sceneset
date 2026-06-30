@@ -470,5 +470,5 @@ jobs:
 
 ## Next Steps
 
-- [Core Components](./core-components.md) — Understand what to test
-- [Architecture Overview](./architecture.md) — System context for integration tests
+- [Architecture Overview](../docs/architecture.md) — System context for integration tests
+- [Configuration Guide](../docs/configuration.md) — Build and runtime configuration options
