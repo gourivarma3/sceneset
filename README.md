@@ -10,11 +10,10 @@ SceneSet is a systemd-managed service that automatically launches the RDK refere
 
 | Document | Description |
 |----------|-------------|
-| [Architecture Overview](./architecture.md) | High-level system design, component interactions, and architectural diagrams |
-| [Core Components](./core-components.md) | Detailed breakdown of SceneSetApp class, event handlers, and internal workflows |
-| [RALF Package Support](./ralf-package-support.md) | Package verification and metadata extraction using libralf |
-| [Configuration Guide](./configuration.md) | Build-time and runtime configuration options |
-| [Testing Guide](./testing.md) | Test infrastructure, coverage, and testing strategies |
+| [Architecture Overview](./docs/architecture.md) | High-level system design, component interactions, and architectural diagrams |
+| [RALF Package Support](./docs/ralf-package-support.md) | Package verification and metadata extraction using libralf |
+| [Configuration Guide](./docs/configuration.md) | Build-time and runtime configuration options |
+| [Testing Guide](./Tests/testing.md) | Test infrastructure, coverage, and testing strategies |
 
 ## Quick Links
 
