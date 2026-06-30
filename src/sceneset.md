@@ -2,7 +2,7 @@
 
 > **Location**: `src/` folder  
 > **Primary Files**: `SceneSet.h`, `SceneSet.cpp`, `main.cpp`  
-> **Purpose**: Core application implementation for RDK scene/display settings management
+> **Purpose**: Thunder COM-RPC client service that coordinates app preinstall and launches/monitors the configured reference app via AppManager/PreinstallManager/PackageInstaller
 
 ---
 
