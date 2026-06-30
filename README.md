@@ -18,10 +18,10 @@ SceneSet is a systemd-managed service that automatically launches the RDK refere
 
 ## Quick Links
 
-- **Source Code**: [`src/`](../src/)
-- **Tests**: [`Tests/L1Tests/`](../Tests/L1Tests/)
-- **Systemd Service**: [`systemd/sceneset.service`](../systemd/sceneset.service)
-- **Build Configuration**: [`CMakeLists.txt`](../CMakeLists.txt)
+- **Source Code**: [`src/`](./src/)
+- **Tests**: [`Tests/L1Tests/`](./Tests/L1Tests/)
+- **Systemd Service**: [`systemd/sceneset.service`](./systemd/sceneset.service)
+- **Build Configuration**: [`CMakeLists.txt`](./CMakeLists.txt)
 
 ## Key Features
 
