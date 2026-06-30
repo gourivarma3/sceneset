@@ -1060,11 +1060,12 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 
 ### Compilation Flags
 
-| Flag | Purpose |
+| Setting / Definition | Purpose |
 |------|---------|
-| `-DHAS_RALF_SUPPORT` | Enables RALF package verification |
-| `-std=c++14` | C++14 standard |
-| `-Wall -Wextra` | Enable warnings |
+| `CXX_STANDARD 17` | Build with C++17 |
+| `DISABLE_REFERENCE_APP_UPDATE` | Disable download monitoring / reference app update flow |
+| `ENABLE_SYSTEM_CONFIG` | Enable reading system config from `/etc/sceneset.conf` |
+| `ENABLE_CONFIG_OVERRIDE` | Enable optional `/opt/sceneset.conf` override on top of system config |
 
 ---
 
