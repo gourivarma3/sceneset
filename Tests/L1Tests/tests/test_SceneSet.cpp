@@ -228,41 +228,41 @@ public:
         return app.m_pendingRestart.load();
     }
 
-    static void SetPendingActiveTelemetry(SceneSetApp& app, bool value) {
-        app.m_pendingActiveTelemetry.store(value);
-    }
+static void SetPendingActiveTelemetry(SceneSetApp& app, bool value) {
+    app.m_telemetryMetricsState.pendingActiveTelemetry.store(value);
+}
 
-    static void SetLaunchRequestTimestampMs(SceneSetApp& app, uint64_t value) {
-        app.m_lastLaunchRequestTsMs.store(value);
-    }
+static void SetLaunchRequestTimestampMs(SceneSetApp& app, uint64_t value) {
+    app.m_telemetryMetricsState.lastLaunchRequestTsMs.store(value);
+}
 
-    static void SetSceneSetStartTimestampMs(SceneSetApp& app, uint64_t value) {
-        app.m_sceneSetStartTsMs.store(value);
-    }
+static void SetSceneSetStartTimestampMs(SceneSetApp& app, uint64_t value) {
+    app.m_telemetryMetricsState.sceneSetStartTsMs.store(value);
+}
 
-    static void SetPreinstallStartTimestampMs(SceneSetApp& app, uint64_t value) {
-        app.m_preinstallStartTsMs.store(value);
-    }
+static void SetPreinstallStartTimestampMs(SceneSetApp& app, uint64_t value) {
+    app.m_telemetryMetricsState.preinstallStartTsMs.store(value);
+}
 
-    static void SetPreinstallEndTimestampMs(SceneSetApp& app, uint64_t value) {
-        app.m_preinstallEndTsMs.store(value);
-    }
+static void SetPreinstallEndTimestampMs(SceneSetApp& app, uint64_t value) {
+    app.m_telemetryMetricsState.preinstallEndTsMs.store(value);
+}
 
-    static void SetCumulativeRelaunchCount(SceneSetApp& app, uint32_t value) {
-        app.m_cumulativeRelaunchCount.store(value);
-    }
+static void SetCumulativeRelaunchCount(SceneSetApp& app, uint32_t value) {
+    app.m_telemetryMetricsState.cumulativeRelaunchCount.store(value);
+}
 
-    static uint32_t GetCumulativeRelaunchCount(const SceneSetApp& app) {
-        return app.m_cumulativeRelaunchCount.load();
-    }
+static uint32_t GetCumulativeRelaunchCount(const SceneSetApp& app) {
+    return app.m_telemetryMetricsState.cumulativeRelaunchCount.load();
+}
 
-    static int GetLastTerminationNature(const SceneSetApp& app) {
-        return app.m_lastTerminationNature.load();
-    }
+static int GetLastTerminationNature(const SceneSetApp& app) {
+    return app.m_telemetryMetricsState.lastTerminationNature.load();
+}
 
-    static void SetLastTerminationNature(SceneSetApp& app, int value) {
-        app.m_lastTerminationNature.store(value);
-    }
+static void SetLastTerminationNature(SceneSetApp& app, int value) {
+    app.m_telemetryMetricsState.lastTerminationNature.store(value);
+}
 
     static std::string GetLastTelemetryMarker(const SceneSetApp& app) {
         return app.m_lastTelemetryMarker;
