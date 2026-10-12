@@ -83,14 +83,14 @@ class SD,FS,RALF VL
 
 ## Quick Navigation
 
-| Document                                                                   | What It Covers                                                                                    |
-| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| [specs/app-launch/spec.md](specs/app-launch/spec.md)                       | App identity, initial launch, lifecycle tracking, crash recovery, OTA restart                     |
-| [specs/preinstall-management/spec.md](specs/preinstall-management/spec.md) | First boot detection, factory app copy, StartPreinstall, completion wait, post-preinstall actions |
-| [specs/ota-update-monitoring/spec.md](specs/ota-update-monitoring/spec.md) | inotify monitoring, settle delay, initial sweep, package staging                                  |
-| [specs/thunder-integration/spec.md](specs/thunder-integration/spec.md)     | COMRPC connections, plugin interfaces, event registration, teardown                               |
-| [specs/configuration/spec.md](specs/configuration/spec.md)                 | Config source layering, all config files, env variables, plugin-sourced values                    |
-| [specs/sceneset-telemetry/spec.md](specs/sceneset-telemetry/spec.md)       | T2 marker contract, timing fields, relaunch behavior                                              |
+| Document                                                                                        | What It Covers                                                                                    |
+| ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| [openspec/specs/app-launch/spec.md](../openspec/specs/app-launch/spec.md)                       | App identity, initial launch, lifecycle tracking, crash recovery, OTA restart                     |
+| [openspec/specs/preinstall-management/spec.md](../openspec/specs/preinstall-management/spec.md) | First boot detection, factory app copy, StartPreinstall, completion wait, post-preinstall actions |
+| [openspec/specs/ota-update-monitoring/spec.md](../openspec/specs/ota-update-monitoring/spec.md) | inotify monitoring, settle delay, initial sweep, package staging                                  |
+| [openspec/specs/thunder-integration/spec.md](../openspec/specs/thunder-integration/spec.md)     | COMRPC connections, plugin interfaces, event registration, teardown                               |
+| [openspec/specs/configuration/spec.md](../openspec/specs/configuration/spec.md)                 | Config source layering, all config files, env variables, plugin-sourced values                    |
+| [openspec/specs/sceneset-telemetry/spec.md](../openspec/specs/sceneset-telemetry/spec.md)       | T2 marker contract, timing fields, relaunch behavior                                              |
 
 ---
 
@@ -100,14 +100,14 @@ class SD,FS,RALF VL
 
 Behavioral contracts per feature area. Each folder contains a `spec.md`.
 
-| Spec                                                                | Subsystem                    | What It Defines                                                                                                                              |
-| ------------------------------------------------------------------- | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| [specs/app-launch/](specs/app-launch/spec.md)                       | Reference App Launch         | Launch sequencing, lifecycle state tracking, crash recovery (ABORT), OTA restart via pending-restart flag                                    |
-| [specs/preinstall-management/](specs/preinstall-management/spec.md) | Preinstall Management        | FSR detection via marker file, factory app copy, `StartPreinstall(forceInstall)`, per-package status tracking, cleanup decisions             |
-| [specs/ota-update-monitoring/](specs/ota-update-monitoring/spec.md) | OTA Update Monitoring        | inotify `IN_CLOSE_WRITE`/`IN_MOVED_TO`, 1-second settle delay, RALF verification, preinstall staging                                         |
-| [specs/thunder-integration/](specs/thunder-integration/spec.md)     | Thunder / COMRPC Integration | `CommunicatorClient` lifecycle, plugin open/close, notification registration, Controller config query                                        |
-| [specs/configuration/](specs/configuration/spec.md)                 | Configuration                | `/opt/sceneset_app.conf`, `/etc/sceneset.conf`, `THUNDER_ACCESS`, CMake variables, plugin-sourced `downloadDir` and `appPreinstallDirectory` |
-| [specs/sceneset-telemetry/](specs/sceneset-telemetry/spec.md)       | Telemetry                    | `ENTS_INFO_Sceneset_LaunchTime` marker, initial launch fields, relaunch-only fields, emission trigger                                        |
+| Spec                                                                                     | Subsystem                    | What It Defines                                                                                                                              |
+| ---------------------------------------------------------------------------------------- | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| [openspec/specs/app-launch/](../openspec/specs/app-launch/spec.md)                       | Reference App Launch         | Launch sequencing, lifecycle state tracking, crash recovery (ABORT), OTA restart via pending-restart flag                                    |
+| [openspec/specs/preinstall-management/](../openspec/specs/preinstall-management/spec.md) | Preinstall Management        | FSR detection via marker file, factory app copy, `StartPreinstall(forceInstall)`, per-package status tracking, cleanup decisions             |
+| [openspec/specs/ota-update-monitoring/](../openspec/specs/ota-update-monitoring/spec.md) | OTA Update Monitoring        | inotify `IN_CLOSE_WRITE`/`IN_MOVED_TO`, 1-second settle delay, RALF verification, preinstall staging                                         |
+| [openspec/specs/thunder-integration/](../openspec/specs/thunder-integration/spec.md)     | Thunder / COMRPC Integration | `CommunicatorClient` lifecycle, plugin open/close, notification registration, Controller config query                                        |
+| [openspec/specs/configuration/](../openspec/specs/configuration/spec.md)                 | Configuration                | `/opt/sceneset_app.conf`, `/etc/sceneset.conf`, `THUNDER_ACCESS`, CMake variables, plugin-sourced `downloadDir` and `appPreinstallDirectory` |
+| [openspec/specs/sceneset-telemetry/](../openspec/specs/sceneset-telemetry/spec.md)       | Telemetry                    | `ENTS_INFO_Sceneset_LaunchTime` marker, initial launch fields, relaunch-only fields, emission trigger                                        |
 
 ---
 
@@ -126,11 +126,11 @@ Supplementary documentation outside the openspec folder.
 
 ### `changes/archive/` — Completed Change Records
 
-| Entry                                                                                                                              | What It Covered                                                            |
-| ---------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| [changes/archive/2026-05-19-home-app-and-override/](changes/archive/2026-05-19-home-app-and-override/)                             | Home app identity resolution and `/opt/sceneset_app.conf` runtime override |
-| [changes/archive/2026-05-19-preinstall-location-config-fallback/](changes/archive/2026-05-19-preinstall-location-config-fallback/) | Preinstall directory resolution fallback via `/etc/sceneset.conf`          |
-| [changes/archive/2026-06-22-sceneset-home-app-telemetry-markers/](changes/archive/2026-06-22-sceneset-home-app-telemetry-markers/) | T2 telemetry marker for home app launch/relaunch timing                    |
+| Entry                                                                                                                                                   | What It Covered                                                            |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| [openspec/changes/archive/2026-05-19-home-app-and-override/](../openspec/changes/archive/2026-05-19-home-app-and-override/)                             | Home app identity resolution and `/opt/sceneset_app.conf` runtime override |
+| [openspec/changes/archive/2026-05-19-preinstall-location-config-fallback/](../openspec/changes/archive/2026-05-19-preinstall-location-config-fallback/) | Preinstall directory resolution fallback via `/etc/sceneset.conf`          |
+| [openspec/changes/archive/2026-06-22-sceneset-home-app-telemetry-markers/](../openspec/changes/archive/2026-06-22-sceneset-home-app-telemetry-markers/) | T2 telemetry marker for home app launch/relaunch timing                    |
 
 ---
 
@@ -148,19 +148,19 @@ Supplementary documentation outside the openspec folder.
 
 ## Key Concepts
 
-| Term                        | Meaning                                                                                                     |
-| --------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `SceneSetApp`               | The single C++ application class owning all COMRPC handles and orchestrating the full lifecycle             |
-| Reference App               | The configured application launched at boot; identified by a single app ID string                           |
-| COMRPC                      | WPEFramework out-of-process RPC mechanism; all plugin calls go over a Unix domain socket                    |
-| `org.rdk.AppManager`        | Thunder plugin managing application launch, kill, install queries, and lifecycle events                     |
-| `org.rdk.PreinstallManager` | Thunder plugin handling bundle preinstallation; notifies on completion                                      |
-| `org.rdk.AppPackageManager` | Thunder plugin providing per-package install status events and download directory config                    |
-| FSR                         | Factory Settings Reset — first boot, detected by absence of `/opt/persistent/.sceneset_factory_apps_copied` |
-| RALF                        | RDK Application Lifecycle Format — package format verified by libralf before staging                        |
-| Settle delay                | 1-second wait after inotify file detection to avoid processing partially written packages                   |
-| `sd_notify`                 | systemd readiness notification; sent after COMRPC interfaces are acquired and handlers registered           |
-| THUNDER_ACCESS              | Environment variable overriding the COMRPC socket path (default: `/tmp/communicator`)                       |
+| Term                        | Meaning                                                                                                            |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `SceneSetApp`               | The single C++ application class owning all COMRPC handles and orchestrating the full lifecycle                    |
+| Reference App               | The configured application launched at boot; identified by a single app ID string                                  |
+| COMRPC                      | WPEFramework out-of-process RPC mechanism; all plugin calls go over a Unix domain socket                           |
+| `org.rdk.AppManager`        | Thunder plugin managing application launch, kill, install queries, and lifecycle events                            |
+| `org.rdk.PreinstallManager` | Thunder plugin handling bundle preinstallation; notifies on completion                                             |
+| `org.rdk.AppPackageManager` | Thunder plugin providing per-package install status events and download directory config                           |
+| FSR                         | Factory Settings Reset — first boot, detected by absence of `/opt/persistent/.sceneset_factory_apps_copied`        |
+| RALF                        | RDK Application Lifecycle Format — package format verified by libralf before staging                               |
+| Settle delay                | 1-second wait after inotify file detection to avoid processing partially written packages                          |
+| `sd_notify`                 | systemd readiness notification; sent after COMRPC interfaces are acquired and before event handlers are registered |
+| THUNDER_ACCESS              | Environment variable overriding the COMRPC socket path (default: `/tmp/communicator`)                              |
 
 ---
 
