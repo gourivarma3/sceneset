@@ -47,8 +47,8 @@ target_compile_definitions(${TEST_EXECUTABLE} PRIVATE
 )
 
 # WPEFramework library paths
-set(WPEFRAMEWORK_LIB_DIR ${CMAKE_INSTALL_PREFIX}/usr/lib)
-set(WPEFRAMEWORK_INCLUDE_DIR ${CMAKE_INSTALL_PREFIX}/usr/include)
+set(WPEFRAMEWORK_LIB_DIR ${CMAKE_INSTALL_PREFIX}/lib)
+set(WPEFRAMEWORK_INCLUDE_DIR ${CMAKE_INSTALL_PREFIX}/include)
 
 #Link libraries
 target_link_libraries(${TEST_EXECUTABLE}
@@ -88,7 +88,6 @@ target_include_directories(${TEST_EXECUTABLE}
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src
     ${GTEST_INCLUDE_DIRS}
-    ${libralf_INCLUDE_DIR}
     ${WPEFRAMEWORK_INCLUDE_DIR}
     ${WPEFRAMEWORK_INCLUDE_DIR}/WPEFramework
 )
@@ -119,7 +118,6 @@ target_compile_definitions(${TEST_EXECUTABLE_RESTART_ALWAYS} PRIVATE
     UNIT_TEST
     DAC_APP_CERT_PATH="/etc/rdk/certs"
     ENABLE_SYSTEM_CONFIG=1
-    ENABLE_FIRMWARE_CHANGE_DETECTION=1
     RESTART_HOMEAPP_ALWAYS=1
 )
 
@@ -156,7 +154,6 @@ target_include_directories(${TEST_EXECUTABLE_RESTART_ALWAYS}
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src
     ${GTEST_INCLUDE_DIRS}
-    ${libralf_INCLUDE_DIR}
     ${WPEFRAMEWORK_INCLUDE_DIR}
     ${WPEFRAMEWORK_INCLUDE_DIR}/WPEFramework
 )
@@ -177,54 +174,3 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
 endif()
 
 install(TARGETS ${TEST_EXECUTABLE_RESTART_ALWAYS} DESTINATION bin)
-
-# L1 test executable for the first-boot marker strategy (ENABLE_FIRMWARE_CHANGE_DETECTION=0)
-set(TEST_EXECUTABLE_MARKER SceneSetL1TestsMarkerIN)
-add_executable(${TEST_EXECUTABLE_MARKER}
-    tests/test_SceneSetMarker.cpp
-    ../../src/SceneSet.cpp
-    ../../src/RalfPackageSupport.cpp
-)
-target_compile_definitions(${TEST_EXECUTABLE_MARKER} PRIVATE
-    UNIT_TEST
-    DAC_APP_CERT_PATH="/etc/rdk/certs"
-    ENABLE_SYSTEM_CONFIG=1
-    ENABLE_FIRMWARE_CHANGE_DETECTION=0
-)
-
-target_link_libraries(${TEST_EXECUTABLE_MARKER}
-    PRIVATE
-    GTest::gtest
-    GTest::gtest_main
-    ${WPEFRAMEWORK_LIB_DIR}/libWPEFrameworkCore.so
-    ${WPEFRAMEWORK_LIB_DIR}/libWPEFrameworkCOM.so
-    pthread
-    systemd
-    dl
-)
-
-if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 9)
-    target_link_libraries(${TEST_EXECUTABLE_MARKER} PRIVATE stdc++fs)
-endif()
-
-if(TARGET ralf-utils::libralf)
-    target_link_libraries(${TEST_EXECUTABLE_MARKER} PRIVATE ralf-utils::libralf)
-elseif(TARGET libralf)
-    target_link_libraries(${TEST_EXECUTABLE_MARKER} PRIVATE libralf)
-elseif(TARGET ralf-utils::libralf-static)
-    target_link_libraries(${TEST_EXECUTABLE_MARKER} PRIVATE ralf-utils::libralf-static)
-elseif(TARGET libralf-static)
-    target_link_libraries(${TEST_EXECUTABLE_MARKER} PRIVATE libralf-static)
-endif()
-
-target_include_directories(${TEST_EXECUTABLE_MARKER}
-    PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src
-    ${GTEST_INCLUDE_DIRS}
-    ${libralf_INCLUDE_DIR}
-    ${WPEFRAMEWORK_INCLUDE_DIR}
-    ${WPEFRAMEWORK_INCLUDE_DIR}/WPEFramework
-)
-
-install(TARGETS ${TEST_EXECUTABLE_MARKER} DESTINATION bin)
