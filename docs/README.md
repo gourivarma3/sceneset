@@ -152,12 +152,12 @@ Supplementary documentation outside the openspec folder.
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------ |
 | `SceneSetApp`               | The single C++ application class owning all COMRPC handles and orchestrating the full lifecycle                    |
 | Reference App               | The configured application launched at boot; identified by a single app ID string                                  |
-| COMRPC                      | WPEFramework out-of-process RPC mechanism; all plugin calls go over a Unix domain socket                           |
+| COMRPC                      | WPEFramework COM-style RPC mechanism (can be in-process or out-of-process); SceneSet uses it out-of-process over a Unix domain socket |
 | `org.rdk.AppManager`        | Thunder plugin managing application launch, kill, install queries, and lifecycle events                            |
 | `org.rdk.PreinstallManager` | Thunder plugin handling bundle preinstallation; notifies on completion                                             |
 | `org.rdk.AppPackageManager` | Thunder plugin providing per-package install status events and download directory config                           |
 | FSR                         | Factory Settings Reset — first boot, detected by absence of `/opt/persistent/.sceneset_factory_apps_copied`        |
-| RALF                        | RDK Application Lifecycle Format — package format verified by libralf before staging                               |
+| RALF                        | RDK Application Layer Format — package format verified by libralf before staging                                   |
 | Settle delay                | 1-second wait after inotify file detection to avoid processing partially written packages                          |
 | `sd_notify`                 | systemd readiness notification; sent after COMRPC interfaces are acquired and before event handlers are registered |
 | THUNDER_ACCESS              | Environment variable overriding the COMRPC socket path (default: `/tmp/communicator`)                              |
