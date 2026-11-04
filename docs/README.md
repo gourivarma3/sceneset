@@ -156,7 +156,7 @@ Supplementary documentation outside the openspec folder.
 | `org.rdk.AppManager`        | Thunder plugin managing application launch, kill, install queries, and lifecycle events                            |
 | `org.rdk.PreinstallManager` | Thunder plugin handling bundle preinstallation; notifies on completion                                             |
 | `org.rdk.AppPackageManager` | Thunder plugin providing per-package install status events and download directory config                           |
-| FSR                         | Factory Settings Reset — first boot, detected by absence of `/opt/persistent/.sceneset_factory_apps_copied`        |
+| FSR                         | Factory Settings Reset — first boot, detected by absence of `/opt/persistent/.sceneset_factory_apps_copied` when `ENABLE_FIRMWARE_CHANGE_DETECTION=OFF`, or by a firmware version change when `ON`        |
 | RALF                        | RDK Application Layer Format — package format verified by libralf before staging                                   |
 | Settle delay                | 1-second wait after inotify file detection to avoid processing partially written packages                          |
 | `sd_notify`                 | systemd readiness notification; sent after COMRPC interfaces are acquired and before event handlers are registered |
@@ -213,8 +213,8 @@ Supplementary documentation outside the openspec folder.
 | `OnAppLifecycleStateChanged` → `APP_STATE_RUNNING` or `APP_STATE_ACTIVE`             | Reference app became active                | Set `m_appLaunched = true`                                                            |
 | `OnAppLifecycleStateChanged` → `APP_STATE_TERMINATING`                               | Reference app is terminating               | Set `m_appLaunched = false`                                                           |
 | `OnAppLifecycleStateChanged` → `APP_STATE_UNLOADED` + `m_pendingRestart = true`      | Post-update restart path                   | Call `startLaunchThread()` to re-launch updated version                               |
-| `OnAppLifecycleStateChanged` → `APP_STATE_UNLOADED` + error reason `APP_ERROR_ABORT` | App crashed (ABORT)                        | Call `startLaunchThread()` for crash recovery restart                                 |
-| `OnAppInstalled` for reference app while `m_appLaunched = true`                      | New version installed while app is running | Set `m_pendingRestart = true`, call `KillApp()`                                       |
+| `OnAppLifecycleStateChanged` → `APP_STATE_UNLOADED` + error reason `APP_ERROR_ABORT`, previous state `APP_STATE_TERMINATING`, `m_pendingRestart = false` | App crashed (ABORT) with `DISABLE_CRASH_RECOVERY=OFF` and `RESTART_HOMEAPP_ALWAYS=OFF`                        | Call `startLaunchThread()` for crash recovery restart                                 |
+| `OnAppInstalled` for reference app while `m_appLaunched = true` and `DISABLE_HOMEAPP_RESTART_ON_NEW_VERSION=OFF`                      | New version installed while app is running | Set `m_pendingRestart = true`, call `KillApp()`                                       |
 | `sigwait()` returns SIGTERM / SIGINT                                                 | Service shutdown requested                 | Call `onTerminate()`: stop threads, kill app, unregister handlers, release interfaces |
 
 ---
@@ -246,11 +246,13 @@ sequenceDiagram
     participant LaunchThread as Launch Thread
 
     AppMgr->>SceneSet: OnAppInstalled(referenceAppId, newVersion)
-    SceneSet->>SceneSet: Set m_pendingRestart = true
-    SceneSet->>AppMgr: KillApp(referenceAppId)
-    AppMgr-->>SceneSet: OnAppLifecycleStateChanged(UNLOADED)
-    SceneSet->>LaunchThread: startLaunchThread()
-    LaunchThread->>AppMgr: LaunchApp(referenceAppId)
+    opt DISABLE_HOMEAPP_RESTART_ON_NEW_VERSION=OFF and m_appLaunched=true
+        SceneSet->>SceneSet: Set m_pendingRestart = true
+        SceneSet->>AppMgr: KillApp(referenceAppId)
+        AppMgr-->>SceneSet: OnAppLifecycleStateChanged(UNLOADED)
+        SceneSet->>LaunchThread: startLaunchThread()
+        LaunchThread->>AppMgr: LaunchApp(referenceAppId)
+    end
 ```
 
 ---
@@ -263,7 +265,7 @@ sequenceDiagram
 | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
 | `/opt/sceneset_app.conf`                        | Optional plain-text file; first line overrides the compiled-in default app ID at runtime                             | Write a new app ID as the first line; takes effect on next service start |
 | `/etc/sceneset.conf`                            | `key=value` file (when `ENABLE_SYSTEM_CONFIG=ON`); provides `defaultHomeApp` and `preinstallLocation`                | Platform-provided; read at startup                                       |
-| `/opt/persistent/.sceneset_factory_apps_copied` | Marker written after first-boot factory app copy. Presence prevents repeated factory app copies on subsequent boots. | Delete to force factory app copy on next start                           |
+| `/opt/persistent/.sceneset_factory_apps_copied` | Used only when `ENABLE_FIRMWARE_CHANGE_DETECTION=OFF`. Marker written after first-boot factory app copy; presence prevents repeated factory app copies on subsequent boots. | With `ENABLE_FIRMWARE_CHANGE_DETECTION=OFF`, delete to force factory app copy on next start                           |
 
 ### Key Build-Time Parameters
 
@@ -277,7 +279,7 @@ sequenceDiagram
 | `RESTART_HOMEAPP_ALWAYS`             | bool   | `OFF`            | When `ON`, restarts app on any `TERMINATING → UNLOADED` transition, not only `APP_ERROR_ABORT` |
 | `SCENESET_TELEMETRY_METRICS_SUPPORT` | bool   | `OFF`            | When `ON`, enables T2 `ENTS_INFO_Sceneset_LaunchTime` marker emission                          |
 | `ENABLE_SYSTEM_CONFIG`               | bool   | `OFF`            | When `ON`, reads `/etc/sceneset.conf` for `defaultHomeApp` and `preinstallLocation`            |
-| `ENABLE_CONFIG_OVERRIDE`             | bool   | `OFF`            | When `ON`, reads `/opt/sceneset.conf` as an additional override layer                          |
+| `ENABLE_CONFIG_OVERRIDE`             | bool   | `OFF`            | When `ON`, reads `/opt/sceneset.conf` as an additional override layer only if `ENABLE_SYSTEM_CONFIG=ON` and the base system config parses successfully                          |
 
 ### Runtime Environment Variables
 
