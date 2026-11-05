@@ -33,7 +33,7 @@ on:
 
 env:
   BUILD_TYPE: Debug
-  THUNDER_REF: "R4.4.7"
+  THUNDER_REF: "R4.4.3"
   INTERFACES_REF: "develop"
 
 jobs:
